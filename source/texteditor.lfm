@@ -222,8 +222,6 @@ object frmTextEditor: TfrmTextEditor
         MouseActions = <>
         MaxExtraMarksColums = 0
         Options = [sgmoDeDuplicateMarksOnOverflow]
-        MarkupInfo.Background = clBtnFace
-        MarkupInfo.Foreground = clNone
       end
       object SynGutterLineNumber1: TSynGutterLineNumber
         Width = 17
@@ -241,9 +239,6 @@ object frmTextEditor: TfrmTextEditor
         MouseActions = <>
         ModifiedColor = 59900
         SavedColor = clGreen
-        MarkupInfo.Background = clNone
-        MarkupInfo.Foreground = clGreen
-        MarkupInfo.FrameColor = 59900
       end
       object SynGutterCodeFolding1: TSynGutterCodeFolding
         MouseActions = <>

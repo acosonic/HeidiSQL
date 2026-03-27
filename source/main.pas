@@ -998,6 +998,7 @@ type
       CellPaintMode: TVTCellPaintMode; CellRect: TRect; var ContentRect: TRect);
     procedure AnyGridMouseUp(Sender: TObject; Button: TMouseButton;
       Shift: TShiftState; X, Y: Integer);
+    procedure AnyGridDblClick(Sender: TObject);
     procedure MainMenuFileClick(Sender: TObject);
     procedure HostListGetText(Sender: TBaseVirtualTree; Node: PVirtualNode;
       Column: TColumnIndex; TextType: TVSTTextType; var CellText: string);
@@ -1455,7 +1456,7 @@ uses
   FileInfo, winpeimagereader, elfreader, machoreader, About, data_sorting, column_selection, loaddata, editvar,
   copytable, csv_detector, exportgrid, usermanager, selectdbobject, reformatter, connections, sqlhelp, updatecheck,
   insertfiles, texteditor, preferences, table_editor, view, routine_editor, trigger_editor, event_editor, grideditlinks,
-  crashdialog;
+  crashdialog, rowviewer;
 
 {$R *.lfm}
 
@@ -11345,6 +11346,23 @@ begin
 end;
 
 
+procedure TMainForm.AnyGridDblClick(Sender: TObject);
+var
+  Grid: TVirtualStringTree;
+  Results: TDBQuery;
+begin
+  Grid := Sender as TVirtualStringTree;
+  if not Assigned(Grid.FocusedNode) then
+    Exit;
+  Results := GridResult(Grid);
+  if Results = nil then
+    Exit;
+  if RowViewerForm = nil then
+    RowViewerForm := TRowViewerForm.Create(Self);
+  RowViewerForm.ShowForRow(Grid, Grid.FocusedNode, Results);
+end;
+
+
 procedure TMainForm.ListDatabasesBeforePaint(Sender: TBaseVirtualTree; TargetCanvas: TCanvas);
 var
   vt: TVirtualStringTree;
@@ -15574,6 +15592,7 @@ begin
   Grid.OnChange := OrgGrid.OnChange;
   Grid.OnCreateEditor := OrgGrid.OnCreateEditor;
   Grid.OnCompareNodes := OrgGrid.OnCompareNodes;
+  Grid.OnDblClick := OrgGrid.OnDblClick;
   Grid.OnEditCancelled := OrgGrid.OnEditCancelled;
   Grid.OnEdited := OrgGrid.OnEdited;
   Grid.OnEditing := OrgGrid.OnEditing;

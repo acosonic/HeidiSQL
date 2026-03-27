@@ -415,6 +415,13 @@ if TargetOS=&apos;darwin&apos; then
         <ResourceBaseClass Value="Frame"/>
       </Unit>
       <Unit>
+        <Filename Value="source\rowviewer.pas"/>
+        <IsPartOfProject Value="True"/>
+        <ComponentName Value="RowViewerForm"/>
+        <HasResources Value="True"/>
+        <ResourceBaseClass Value="Form"/>
+      </Unit>
+      <Unit>
         <Filename Value="source\event_editor.pas"/>
         <IsPartOfProject Value="True"/>
         <ComponentName Value="frmEventEditor"/>
