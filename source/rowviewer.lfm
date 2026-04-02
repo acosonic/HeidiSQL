@@ -20,12 +20,13 @@ object RowViewerForm: TRowViewerForm
     Align = alClient
     ColCount = 2
     DefaultRowHeight = 22
-    FixedCols = 0
+    FixedCols = 1
     FixedRows = 1
-    Options = [goFixedVertLine, goFixedHorzLine, goVertLine, goHorzLine, goRowSizing, goThumbTracking, goRowSelect]
+    Options = [goFixedVertLine, goFixedHorzLine, goVertLine, goHorzLine, goRowSizing, goThumbTracking, goEditing]
     RowCount = 2
     TabOrder = 0
     OnDrawCell = GridViewerDrawCell
+    OnSetEditText = GridViewerSetEditText
   end
   object pnlBottom: TPanel
     Left = 0

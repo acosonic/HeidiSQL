@@ -14,11 +14,26 @@ uses
 
 {$R *.res}
 
+{$IFDEF UNIX}
+function setenv(name, value: PChar; replace: Integer): Integer; cdecl; external 'c';
+{$ENDIF}
+
 var
   AppLanguage: String;
   WasDarkMode: Boolean;
 begin
   PostponedLogItems := TDBLogItems.Create(True);
+
+  {$IFDEF UNIX}
+  // Auto-detect Wayland: set QT_QPA_PLATFORM=wayland if running under a Wayland compositor
+  // and the user has not already overridden the platform explicitly.
+  if (GetEnvironmentVariable('QT_QPA_PLATFORM') = '') and
+     (GetEnvironmentVariable('WAYLAND_DISPLAY') <> '') then begin
+    // setenv from libc: name, value, overwrite
+    setenv(PChar('QT_QPA_PLATFORM'), PChar('wayland'), 1);
+  end;
+  {$ENDIF}
+
   Application.{%H-}MainFormOnTaskBar := True; // hide warning: Symbol "MainFormOnTaskBar" is not portable
 
   // Use MySQL standard format for date/time variables: YYYY-MM-DD HH:MM:SS

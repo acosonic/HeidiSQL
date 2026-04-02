@@ -5,7 +5,7 @@ unit rowviewer;
 interface
 
 uses
-  Classes, SysUtils, Forms, Controls, StdCtrls, ExtCtrls, Grids,
+  Classes, SysUtils, StrUtils, Forms, Controls, Dialogs, StdCtrls, ExtCtrls, Grids,
   Graphics, LCLType, LCLIntf,
   laz.VirtualTrees, lazaruscompat, dbconnection;
 
@@ -25,10 +25,13 @@ type
     procedure btnCloseClick(Sender: TObject);
     procedure GridViewerDrawCell(Sender: TObject; ACol, ARow: Integer;
       ARect: TRect; AState: TGridDrawState);
+    procedure GridViewerSetEditText(Sender: TObject; ACol, ARow: Integer;
+      const Value: String);
   private
     FGrid: TVirtualStringTree;
     FNode: PVirtualNode;
     FResults: TDBQuery;
+    FLoading: Boolean;
     procedure LoadCurrentRow;
     procedure Navigate(Delta: Integer);
   public
@@ -63,9 +66,9 @@ end;
 procedure TRowViewerForm.FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
 begin
   case Key of
-    VK_ESCAPE: Close;
-    VK_LEFT, VK_PRIOR: if Shift = [] then Navigate(-1);
-    VK_RIGHT, VK_NEXT: if Shift = [] then Navigate(1);
+    VK_ESCAPE: if not GridViewer.EditorMode then Close;
+    VK_LEFT, VK_PRIOR: if (Shift = []) and not GridViewer.EditorMode then Navigate(-1);
+    VK_RIGHT, VK_NEXT: if (Shift = []) and not GridViewer.EditorMode then Navigate(1);
   end;
 end;
 
@@ -86,23 +89,27 @@ begin
   if (RowNum = nil) or (RowNum^ < 0) then
     Exit;
 
-  FResults.RecNo := RowNum^;
+  FLoading := True;
+  try
+    FResults.RecNo := RowNum^;
+    TotalRows := FGrid.RootNodeCount;
 
-  TotalRows := FGrid.RootNodeCount;
+    GridViewer.RowCount := ColCount + 1;
+    for i := 0 to ColCount - 1 do begin
+      GridViewer.Cells[0, i + 1] := FResults.ColumnNames[i];
+      if FResults.IsNull(i) then
+        Val := TEXT_NULL
+      else
+        Val := FResults.Col(i);
+      GridViewer.Cells[1, i + 1] := Val;
+    end;
 
-  GridViewer.RowCount := ColCount + 1;
-  for i := 0 to ColCount - 1 do begin
-    GridViewer.Cells[0, i + 1] := FResults.ColumnNames[i];
-    if FResults.IsNull(i) then
-      Val := TEXT_NULL
-    else
-      Val := FResults.Col(i);
-    GridViewer.Cells[1, i + 1] := Val;
+    lblRow.Caption := Format('Row %d of %d', [FNode.Index + 1, TotalRows]);
+    btnPrev.Enabled := FGrid.GetPrevious(FNode) <> nil;
+    btnNext.Enabled := FGrid.GetNext(FNode) <> nil;
+  finally
+    FLoading := False;
   end;
-
-  lblRow.Caption := Format('Row %d of %d', [FNode.Index + 1, TotalRows]);
-  btnPrev.Enabled := FGrid.GetPrevious(FNode) <> nil;
-  btnNext.Enabled := FGrid.GetNext(FNode) <> nil;
 end;
 
 procedure TRowViewerForm.Navigate(Delta: Integer);
@@ -137,6 +144,40 @@ end;
 procedure TRowViewerForm.btnCloseClick(Sender: TObject);
 begin
   Close;
+end;
+
+procedure TRowViewerForm.GridViewerSetEditText(Sender: TObject; ACol, ARow: Integer;
+  const Value: String);
+var
+  ColIndex: Integer;
+  IsNull: Boolean;
+  RowNum: PInt64;
+begin
+  if FLoading or (ACol <> 1) or (ARow < 1) then
+    Exit;
+  if (FGrid = nil) or (FNode = nil) or (FResults = nil) then
+    Exit;
+  if not FResults.IsEditable then
+    Exit;
+
+  ColIndex := ARow - 1;
+  RowNum := FGrid.GetNodeData(FNode);
+  FResults.RecNo := RowNum^;
+
+  IsNull := (Value = TEXT_NULL);
+  try
+    FResults.SetCol(ColIndex, IfThen(IsNull, '', Value), IsNull, False);
+    FResults.SaveModifications;
+    // Refresh the cell display and main grid node
+    GridViewer.Cells[1, ARow] := Value;
+    FGrid.InvalidateNode(FNode);
+  except
+    on E: Exception do begin
+      // Revert the cell to the original value on error
+      LoadCurrentRow;
+      MessageDlg('Save failed: ' + E.Message, mtError, [mbOK], 0);
+    end;
+  end;
 end;
 
 procedure TRowViewerForm.GridViewerDrawCell(Sender: TObject; ACol, ARow: Integer;
