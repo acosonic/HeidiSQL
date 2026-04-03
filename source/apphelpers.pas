@@ -153,6 +153,16 @@ type
     procedure LogFromThread(Msg: String; Category: TDBLogCategory);
   end;
 
+  // Background thread that pre-warms the DB object cache after connection
+  TCacheThread = class(TThread)
+  private
+    FConnection: TDBConnection;
+    FDatabase: String;
+  public
+    constructor Create(AConnection: TDBConnection; ADatabase: String);
+    procedure Execute; override;
+  end;
+
   TSqlTranspiler = class(TObject)
     class function CreateTable(SQL: String; SourceDb, TargetDb: TDBConnection): String;
   end;
@@ -534,11 +544,9 @@ begin
   if Length(Result) <= MaxLen then
     Exit;
   if FromLeft then begin
-    SetLength(Result, MaxLen);
-    Result[MaxLen] := '…';
+    Result := Copy(S, 1, MaxLen - 1) + 'â€¦';
   end else begin
-    Result := Copy(Result, Length(Result)-MaxLen, Length(Result));
-    Result := '…' + Result;
+    Result := 'â€¦' + Copy(S, Length(S) - (MaxLen - 2), MaxLen - 1);
   end;
 end;
 
@@ -848,7 +856,7 @@ end;
 
 function RoundCommercial(e: Extended): Int64;
 begin
-  // "Kaufmännisch runden"
+  // "Kaufmï¿½nnisch runden"
   // In contrast to Delphi's Round() which rounds *.5 to the next even number
   Result := Trunc(e);
   if Frac(e) >= 0.5 then
@@ -1528,7 +1536,7 @@ begin
   Bmp := Graphics.TBitmap.Create;
   Bmp.Canvas.Font.Name := Font.Name;
   Bmp.Canvas.Font.Size := Font.Size;
-  Result := Bmp.Canvas.TextHeight('Äy');
+  Result := Bmp.Canvas.TextHeight('ï¿½y');
   Bmp.Free;
 end;
 
@@ -3181,6 +3189,28 @@ end;
 procedure TQueryThread.BatchFinished;
 begin
   MainForm.FinishedQueryExecution(Self);
+end;
+
+
+{ TCacheThread }
+
+constructor TCacheThread.Create(AConnection: TDBConnection; ADatabase: String);
+begin
+  inherited Create(False);
+  FConnection := AConnection;
+  FDatabase := ADatabase;
+  FreeOnTerminate := True;
+  Priority := tpLower;
+end;
+
+procedure TCacheThread.Execute;
+begin
+  FConnection.SetLockedByThread(Self);
+  try
+    FConnection.GetDbObjects(FDatabase);
+  finally
+    FConnection.SetLockedByThread(nil);
+  end;
 end;
 
 

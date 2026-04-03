@@ -103,6 +103,7 @@ type
       FDirectoryWatchNotficationRunning: Boolean;
       FErrorLine: Integer;
       FFileEncoding: String;
+      FLastDetectedTable: String;
       procedure SetMemoFilename(Value: String);
       procedure SetQueryRunning(Value: Boolean);
       procedure TimerLastChangeOnTimer(Sender: TObject);
@@ -1409,6 +1410,7 @@ type
     function GetEncodingName(Encoding: TEncoding): String;
     function GetCharsetByEncoding(Encoding: TEncoding): String;
     procedure RefreshHelperNode(NodeIndex: Cardinal);
+    procedure UpdateHelperColumnsFromSQL(Tab: TQueryTab);
     procedure BeforeQueryExecution(Thread: TQueryThread);
     procedure AfterQueryExecution(Thread: TQueryThread);
     procedure FinishedQueryExecution(Thread: TQueryThread);
@@ -9888,6 +9890,10 @@ begin
   // Manually trigger changed focused tree node, to display the right server vendor
   // and version. Also required on reconnects.
   DBtree.OnFocusChanged(DBtree, DBtree.FocusedNode, DBtree.FocusedColumn);
+  // Pre-warm the DB object cache in the background so tree expansion and
+  // column hints are instant after connection.
+  if Database <> '' then
+    TCacheThread.Create(Connection, Database);
 end;
 
 
@@ -9901,6 +9907,10 @@ begin
 
   if QueryTabs.ActiveHelpersTree <> nil then
     QueryTabs.ActiveHelpersTree.Invalidate;
+
+  // Pre-warm the object cache for the newly selected database in the background
+  if (Database <> '') and (not Connection.DbObjectsCached(Database)) then
+    TCacheThread.Create(Connection, Database);
 end;
 
 
@@ -14559,6 +14569,60 @@ begin
 end;
 
 
+procedure TMainForm.UpdateHelperColumnsFromSQL(Tab: TQueryTab);
+var
+  rx: TRegExpr;
+  SQL, TableName: String;
+  Conn: TDBConnection;
+  DBObjects: TDBObjectList;
+  Obj: TDBObject;
+  ColsNode: PVirtualNode;
+begin
+  if Tab = nil then
+    Exit;
+  Conn := ActiveConnection;
+  if Conn = nil then
+    Exit;
+  SQL := Tab.Memo.Text;
+  if SQL = '' then
+    Exit;
+
+  rx := TRegExpr.Create;
+  rx.ModifierI := True;
+  rx.Expression := '\b(?:FROM|UPDATE|INTO)\s+(?:IGNORE\s+)?([`"\[]?[\w$]+[`"\]]?)';
+  try
+    if not rx.Exec(SQL) then
+      Exit;
+    TableName := Conn.DeQuoteIdent(rx.Match[1]);
+  finally
+    rx.Free;
+  end;
+
+  if (TableName = '') or (TableName.ToLowerInvariant = Tab.FLastDetectedTable.ToLowerInvariant) then
+    Exit;
+
+  // Look up the table in the current database
+  try
+    DBObjects := Conn.GetDBObjects(Conn.Database);
+  except
+    Exit;
+  end;
+  for Obj in DBObjects do begin
+    if (Obj.Name.ToLowerInvariant = TableName.ToLowerInvariant) and
+       (Obj.NodeType in [lntTable, lntView]) then begin
+      Tab.FLastDetectedTable := TableName;
+      SelectedTableColumns := Obj.TableColumns;
+      RefreshHelperNode(TQueryTab.HelperNodeColumns);
+      // Auto-expand the Columns node so user sees results immediately
+      ColsNode := FindNode(Tab.treeHelpers, TQueryTab.HelperNodeColumns, nil);
+      if Assigned(ColsNode) then
+        Tab.treeHelpers.Expanded[ColsNode] := True;
+      Break;
+    end;
+  end;
+end;
+
+
 procedure TMainForm.RefreshHelperNode(NodeIndex: Cardinal);
 var
   Tab: TQueryTab;
@@ -15386,6 +15450,9 @@ var
   ParamFound: Boolean;
 begin
   TimerLastChange.Enabled := False;
+
+  // Auto-detect table from SQL and refresh Columns helper
+  MainForm.UpdateHelperColumnsFromSQL(Self);
 
   if not BindParamsActivated then
     Exit;
