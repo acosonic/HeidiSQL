@@ -2002,53 +2002,6 @@ object frmPreferences: TfrmPreferences
       Caption = 'AI'
       ClientHeight = 414
       ClientWidth = 694
-      object lblAnthropicApiKey: TLabel
-        Left = 8
-        Height = 15
-        Top = 10
-        Width = 120
-        Caption = 'Anthropic API key:'
-        AutoSize = True
-      end
-      object editAnthropicApiKey: TEdit
-        Left = 8
-        Height = 23
-        Top = 30
-        Width = 580
-        TabOrder = 0
-        PasswordChar = '*'
-        TextHint = 'sk-ant-...'
-        OnChange = Modified
-      end
-      object lblClaudeModel: TLabel
-        Left = 8
-        Height = 15
-        Top = 62
-        Width = 80
-        Caption = 'Claude model:'
-        AutoSize = True
-      end
-      object comboClaudeModel: TComboBox
-        Left = 8
-        Height = 23
-        Top = 82
-        Width = 300
-        TabOrder = 1
-        Items.Strings = (
-          'claude-haiku-4-5-20251001'
-          'claude-sonnet-4-6'
-          'claude-opus-4-6'
-        )
-        OnChange = Modified
-      end
-      object lblAIHint: TLabel
-        Left = 8
-        Height = 15
-        Top = 114
-        Width = 200
-        Caption = 'Ctrl+Enter in the AI prompt below the SQL editor generates SQL.'
-        AutoSize = True
-      end
     end
   end
   object btnCancel: TButton

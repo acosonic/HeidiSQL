@@ -179,11 +179,6 @@ type
     lblReformatter: TLabel;
     comboReformatter: TComboBox;
     tabAI: TTabSheet;
-    lblAnthropicApiKey: TLabel;
-    editAnthropicApiKey: TEdit;
-    lblClaudeModel: TLabel;
-    comboClaudeModel: TComboBox;
-    lblAIHint: TLabel;
     procedure editTerminalButtonClick(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FormShow(Sender: TObject);
@@ -237,10 +232,13 @@ type
     FLanguages: TStringList;
     FRestartOptionTouched: Boolean;
     FRestartOptionApplied: Boolean;
+    editAnthropicApiKey: TEdit;
+    comboClaudeModel: TComboBox;
     procedure InitLanguages;
     procedure SelectDirectory(Sender: TObject; NewFolderButton: Boolean);
     function EnsureShortcutIsUnused(RequestShortcut: TShortCut): Boolean;
     procedure ShowShortCut(Index: Integer);
+    procedure AISettingChanged(Sender: TObject);
   public
     { Public declarations }
   end;
@@ -265,6 +263,12 @@ begin
   if (Sender is TComponent) and (TComponent(Sender).Tag <> 0) then begin
     FRestartOptionTouched := True;
   end;
+end;
+
+
+procedure TfrmPreferences.AISettingChanged(Sender: TObject);
+begin
+  btnApply.Enabled := True;
 end;
 
 
@@ -607,6 +611,41 @@ begin
   Reformatter := TfrmReformatter.Create(Self);
   comboReformatter.Items.AddStrings(Reformatter.grpReformatter.Items);
   Reformatter.Free;
+
+  // AI tab — create controls programmatically so they work in Qt5
+  with TLabel.Create(tabAI) do begin
+    Parent := tabAI;
+    Left := 8; Top := 10;
+    Caption := 'Anthropic API key:';
+    AutoSize := True;
+  end;
+  editAnthropicApiKey := TEdit.Create(tabAI);
+  editAnthropicApiKey.Parent := tabAI;
+  editAnthropicApiKey.Left := 8; editAnthropicApiKey.Top := 30;
+  editAnthropicApiKey.Width := 500; editAnthropicApiKey.Height := 23;
+  editAnthropicApiKey.PasswordChar := '*';
+  editAnthropicApiKey.TextHint := 'sk-ant-...';
+  editAnthropicApiKey.OnChange := AISettingChanged;
+  with TLabel.Create(tabAI) do begin
+    Parent := tabAI;
+    Left := 8; Top := 62;
+    Caption := 'Claude model:';
+    AutoSize := True;
+  end;
+  comboClaudeModel := TComboBox.Create(tabAI);
+  comboClaudeModel.Parent := tabAI;
+  comboClaudeModel.Left := 8; comboClaudeModel.Top := 82;
+  comboClaudeModel.Width := 300; comboClaudeModel.Height := 23;
+  comboClaudeModel.Items.Add('claude-haiku-4-5-20251001');
+  comboClaudeModel.Items.Add('claude-sonnet-4-6');
+  comboClaudeModel.Items.Add('claude-opus-4-6');
+  comboClaudeModel.OnChange := AISettingChanged;
+  with TLabel.Create(tabAI) do begin
+    Parent := tabAI;
+    Left := 8; Top := 114;
+    Caption := 'Ctrl+Enter in the AI prompt strip below the SQL editor generates SQL.';
+    AutoSize := True;
+  end;
 end;
 
 
