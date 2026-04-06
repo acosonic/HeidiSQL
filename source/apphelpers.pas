@@ -153,16 +153,6 @@ type
     procedure LogFromThread(Msg: String; Category: TDBLogCategory);
   end;
 
-  // Background thread that pre-warms the DB object cache after connection
-  TCacheThread = class(TThread)
-  private
-    FConnection: TDBConnection;
-    FDatabase: String;
-  public
-    constructor Create(AConnection: TDBConnection; ADatabase: String);
-    procedure Execute; override;
-  end;
-
   TSqlTranspiler = class(TObject)
     class function CreateTable(SQL: String; SourceDb, TargetDb: TDBConnection): String;
   end;
@@ -3189,28 +3179,6 @@ end;
 procedure TQueryThread.BatchFinished;
 begin
   MainForm.FinishedQueryExecution(Self);
-end;
-
-
-{ TCacheThread }
-
-constructor TCacheThread.Create(AConnection: TDBConnection; ADatabase: String);
-begin
-  inherited Create(False);
-  FConnection := AConnection;
-  FDatabase := ADatabase;
-  FreeOnTerminate := True;
-  Priority := tpLower;
-end;
-
-procedure TCacheThread.Execute;
-begin
-  FConnection.SetLockedByThread(Self);
-  try
-    FConnection.GetDbObjects(FDatabase);
-  finally
-    FConnection.SetLockedByThread(nil);
-  end;
 end;
 
 

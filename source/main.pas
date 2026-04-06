@@ -1294,6 +1294,8 @@ type
     //FHelpData: TSimpleKeyValuePairs;
     FMainWinMaximized: Boolean;
     FCurrentPixelsPerInch: Integer;
+    FPreCacheConnection: TDBConnection;
+    FPreCacheDatabase: String;
 
     // Host subtabs backend structures
     FHostListResults: TDBQueryList;
@@ -1322,6 +1324,7 @@ type
     function ConfirmTabClear(PageIndex: Integer; AppIsClosing: Boolean): Boolean;
     procedure UpdateFilterPanel(Sender: TObject);
     procedure ConnectionReady(Connection: TDBConnection; Database: String);
+    procedure AsyncPreCacheDB(Data: PtrInt);
     procedure DatabaseChanged(Connection: TDBConnection; Database: String);
     procedure ObjectnamesChanged(Connection: TDBConnection; Database: String);
     procedure UpdateLineCharPanel;
@@ -9890,10 +9893,20 @@ begin
   // Manually trigger changed focused tree node, to display the right server vendor
   // and version. Also required on reconnects.
   DBtree.OnFocusChanged(DBtree, DBtree.FocusedNode, DBtree.FocusedColumn);
-  // Pre-warm the DB object cache in the background so tree expansion and
-  // column hints are instant after connection.
-  if Database <> '' then
-    TCacheThread.Create(Connection, Database);
+  // Queue DB object cache warm-up to run after the current event returns so the
+  // UI shows the connected state before the first DB queries are made.
+  if Database <> '' then begin
+    FPreCacheConnection := Connection;
+    FPreCacheDatabase := Database;
+    Application.QueueAsyncCall(AsyncPreCacheDB, 0);
+  end;
+end;
+
+
+procedure TMainForm.AsyncPreCacheDB(Data: PtrInt);
+begin
+  if Assigned(FPreCacheConnection) and (FPreCacheDatabase <> '') then
+    FPreCacheConnection.GetDbObjects(FPreCacheDatabase);
 end;
 
 
@@ -9908,9 +9921,12 @@ begin
   if QueryTabs.ActiveHelpersTree <> nil then
     QueryTabs.ActiveHelpersTree.Invalidate;
 
-  // Pre-warm the object cache for the newly selected database in the background
-  if (Database <> '') and (not Connection.DbObjectsCached(Database)) then
-    TCacheThread.Create(Connection, Database);
+  // Queue DB object cache warm-up for the newly selected database
+  if (Database <> '') and (not Connection.DbObjectsCached(Database)) then begin
+    FPreCacheConnection := Connection;
+    FPreCacheDatabase := Database;
+    Application.QueueAsyncCall(AsyncPreCacheDB, 0);
+  end;
 end;
 
 
