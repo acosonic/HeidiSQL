@@ -286,6 +286,13 @@ begin
   // See OnChanging procedure
   btnApply.Enabled := FWasModified;
   TExtForm.PageControlTabHighlight(pagecontrolMain);
+  // Reinit shortcut tree only when the Shortcuts tab is actually shown.
+  // Use False (non-recursive) so VirtualStringTree initializes nodes lazily
+  // on demand as they scroll into view, not all at once.
+  if pagecontrolMain.ActivePage = tabShortcuts then begin
+    TreeShortcutItems.ReinitChildren(nil, False);
+    SelectNode(TreeShortcutItems, nil);
+  end;
 end;
 
 
@@ -762,10 +769,6 @@ begin
     lbsUnix: comboLineBreakStyle.ItemIndex := 1;
     lbsMac: comboLineBreakStyle.ItemIndex := 2;
   end;
-
-  // Shortcuts
-  TreeShortcutItems.ReinitChildren(nil, True);
-  SelectNode(TreeShortcutItems, nil);
 
   // Files and tabs
   chkAskFileSave.Checked := AppSettings.ReadBool(asPromptSaveFileOnTabClose);
