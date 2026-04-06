@@ -2005,65 +2005,49 @@ object frmPreferences: TfrmPreferences
       object lblAnthropicApiKey: TLabel
         Left = 8
         Height = 15
-        Top = 8
+        Top = 10
         Width = 120
-        AutoSize = True
-        BorderSpacing.Around = 4
         Caption = 'Anthropic API key:'
+        AutoSize = True
       end
       object editAnthropicApiKey: TEdit
-        AnchorSideTop.Control = lblAnthropicApiKey
-        AnchorSideTop.Side = asrBottom
-        AnchorSideRight.Control = tabAI
-        AnchorSideRight.Side = asrBottom
         Left = 8
         Height = 23
-        Top = 31
+        Top = 30
         Width = 580
-        Anchors = [akTop, akLeft, akRight]
-        BorderSpacing.Around = 4
-        PasswordChar = '*'
         TabOrder = 0
+        PasswordChar = '*'
         TextHint = 'sk-ant-...'
         OnChange = Modified
       end
       object lblClaudeModel: TLabel
-        AnchorSideTop.Control = editAnthropicApiKey
-        AnchorSideTop.Side = asrBottom
         Left = 8
         Height = 15
         Top = 62
         Width = 80
-        AutoSize = True
-        BorderSpacing.Around = 4
         Caption = 'Claude model:'
+        AutoSize = True
       end
       object comboClaudeModel: TComboBox
-        AnchorSideTop.Control = lblClaudeModel
-        AnchorSideTop.Side = asrBottom
         Left = 8
         Height = 23
-        Top = 85
+        Top = 82
         Width = 300
-        BorderSpacing.Around = 4
+        TabOrder = 1
         Items.Strings = (
           'claude-haiku-4-5-20251001'
           'claude-sonnet-4-6'
           'claude-opus-4-6'
         )
-        TabOrder = 1
         OnChange = Modified
       end
       object lblAIHint: TLabel
-        AnchorSideTop.Control = comboClaudeModel
-        AnchorSideTop.Side = asrBottom
         Left = 8
         Height = 15
-        Top = 116
-        Width = 100
+        Top = 114
+        Width = 200
+        Caption = 'Ctrl+Enter in the AI prompt below the SQL editor generates SQL.'
         AutoSize = True
-        BorderSpacing.Around = 4
-        Caption = 'Ctrl+Enter in the query editor AI strip generates SQL from plain English.'
       end
     end
   end
