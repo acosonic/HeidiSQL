@@ -15,7 +15,7 @@ uses
   LazStringUtils, dbconnection, dbstructures, dbstructures.mysql, generic_types,
   apphelpers, extra_controls, createdatabase, SynEditMarkup, SynEditMarkupBracket,
   searchreplace, ImgList, IniFiles, LazFileUtils, LazUTF8, tabletools,
-  lazaruscompat, extfiledialog, process, SynEditMiscClasses, Contnrs;
+  lazaruscompat, extfiledialog, process, SynEditMiscClasses, Contnrs, aihelper;
 
 
 type
@@ -121,6 +121,10 @@ type
       pnlHelpers: TPanel;
       filterHelpers: TEditButton;
       treeHelpers: TVirtualStringTree;
+      pnlAI: TPanel;
+      memoAIPrompt: TMemo;
+      btnAIGenerate: TButton;
+      lblAIExplain: TLabel;
       MemoFileRenamed: Boolean;
       MemoLineBreaks: TLineBreaks;
       //DirectoryWatch: TDirectoryWatch;
@@ -1326,6 +1330,9 @@ type
     procedure ConnectionReady(Connection: TDBConnection; Database: String);
     procedure AsyncPreCacheDB(Data: PtrInt);
     procedure DatabaseChanged(Connection: TDBConnection; Database: String);
+    procedure btnAIGenerateClick(Sender: TObject);
+    procedure memoAIPromptKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+    procedure AIResultCallback(SQL, Explanation, ErrorMsg: String);
     procedure ObjectnamesChanged(Connection: TDBConnection; Database: String);
     procedure UpdateLineCharPanel;
     procedure SetSnippetFilenames;
@@ -1946,6 +1953,34 @@ begin
   QueryTab.tabsetQuery := tabsetQuery;
   //InheritFont(QueryTab.tabsetQuery.Font);
   QueryTab.ResultTabs := TResultTabs.Create(True);
+
+  // AI prompt strip for the first (static) query tab
+  QueryTab.pnlAI := TPanel.Create(QueryTab.pnlMemo);
+  QueryTab.pnlAI.Parent := QueryTab.pnlMemo;
+  QueryTab.pnlAI.Align := alBottom;
+  QueryTab.pnlAI.Height := 58;
+  QueryTab.pnlAI.BevelOuter := bvNone;
+  QueryTab.pnlAI.BorderStyle := bsSingle;
+  QueryTab.pnlAI.Visible := True;
+  QueryTab.memoAIPrompt := TMemo.Create(QueryTab.pnlAI);
+  QueryTab.memoAIPrompt.Parent := QueryTab.pnlAI;
+  QueryTab.memoAIPrompt.Align := alClient;
+  QueryTab.memoAIPrompt.ScrollBars := ssNone;
+  QueryTab.memoAIPrompt.WordWrap := True;
+  QueryTab.memoAIPrompt.TextHint := 'Ask AI to write SQL... (e.g. "show all users ordered by name")';
+  QueryTab.memoAIPrompt.OnKeyDown := memoAIPromptKeyDown;
+  QueryTab.btnAIGenerate := TButton.Create(QueryTab.pnlAI);
+  QueryTab.btnAIGenerate.Parent := QueryTab.pnlAI;
+  QueryTab.btnAIGenerate.Align := alRight;
+  QueryTab.btnAIGenerate.Caption := 'Generate SQL';
+  QueryTab.btnAIGenerate.Width := 100;
+  QueryTab.btnAIGenerate.OnClick := btnAIGenerateClick;
+  QueryTab.lblAIExplain := TLabel.Create(QueryTab.pnlAI);
+  QueryTab.lblAIExplain.Parent := QueryTab.pnlAI;
+  QueryTab.lblAIExplain.Align := alBottom;
+  QueryTab.lblAIExplain.Caption := '';
+  QueryTab.lblAIExplain.Height := 18;
+  QueryTab.lblAIExplain.Font.Color := clNavy;
 
   QueryTabs := TQueryTabList.Create(True);
   QueryTabs.Add(QueryTab);
@@ -9910,6 +9945,80 @@ begin
 end;
 
 
+procedure TMainForm.btnAIGenerateClick(Sender: TObject);
+var
+  Tab: TQueryTab;
+  ApiKey, Model, Prompt, Schema: String;
+begin
+  Tab := QueryTabs.ActiveTab;
+  if Tab = nil then Exit;
+
+  ApiKey := AppSettings.ReadString(asAnthropicApiKey);
+  if ApiKey.IsEmpty then begin
+    MessageDlg('AI not configured', 'Please set your Anthropic API key in Tools > Preferences > AI.', mtWarning, [mbOK], 0);
+    Exit;
+  end;
+
+  Prompt := Trim(Tab.memoAIPrompt.Text);
+  if Prompt.IsEmpty then begin
+    Tab.memoAIPrompt.SetFocus;
+    Exit;
+  end;
+
+  if ActiveConnection = nil then begin
+    MessageDlg('No connection', 'Connect to a database first.', mtWarning, [mbOK], 0);
+    Exit;
+  end;
+
+  Tab.btnAIGenerate.Enabled := False;
+  Tab.btnAIGenerate.Caption := 'Generating...';
+  Tab.lblAIExplain.Caption := '';
+
+  Model := AppSettings.ReadString(asClaudeModel);
+  if Model.IsEmpty then
+    Model := 'claude-haiku-4-5-20251001';
+
+  Schema := BuildSchemaContext(ActiveConnection, ActiveConnection.Database);
+
+  TAIThread.Create(ApiKey, Model, Prompt, Schema, AIResultCallback);
+end;
+
+
+procedure TMainForm.memoAIPromptKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+begin
+  if (Key = VK_RETURN) and (Shift = [ssCtrl]) then begin
+    Key := 0;
+    btnAIGenerateClick(Sender);
+  end;
+end;
+
+
+procedure TMainForm.AIResultCallback(SQL, Explanation, ErrorMsg: String);
+var
+  Tab: TQueryTab;
+begin
+  Tab := QueryTabs.ActiveTab;
+  if Tab = nil then Exit;
+
+  Tab.btnAIGenerate.Enabled := True;
+  Tab.btnAIGenerate.Caption := 'Generate SQL';
+
+  if ErrorMsg <> '' then begin
+    Tab.lblAIExplain.Font.Color := clRed;
+    Tab.lblAIExplain.Caption := 'Error: ' + ErrorMsg;
+    Exit;
+  end;
+
+  Tab.lblAIExplain.Font.Color := clNavy;
+  Tab.lblAIExplain.Caption := Explanation;
+
+  if SQL <> '' then begin
+    Tab.Memo.Lines.Text := SQL;
+    Tab.Memo.TrySetFocus;
+  end;
+end;
+
+
 procedure TMainForm.DatabaseChanged(Connection: TDBConnection; Database: String);
 begin
   // Immediately force db icons to repaint, so the user sees the active db state
@@ -12459,6 +12568,38 @@ begin
   QueryTab.treeHelpers.RootNodeCount := treeQueryHelpers.RootNodeCount;
   QueryTab.treeHelpers.TextMargin := treeQueryHelpers.TextMargin;
   FixVT(QueryTab.treeHelpers);
+
+  // AI prompt strip at bottom of the editor panel
+  QueryTab.pnlAI := TPanel.Create(QueryTab.pnlMemo);
+  QueryTab.pnlAI.Parent := QueryTab.pnlMemo;
+  QueryTab.pnlAI.Align := alBottom;
+  QueryTab.pnlAI.Height := 58;
+  QueryTab.pnlAI.BevelOuter := bvNone;
+  QueryTab.pnlAI.BorderStyle := bsSingle;
+  QueryTab.pnlAI.Visible := True;
+
+  QueryTab.memoAIPrompt := TMemo.Create(QueryTab.pnlAI);
+  QueryTab.memoAIPrompt.Parent := QueryTab.pnlAI;
+  QueryTab.memoAIPrompt.Align := alClient;
+  QueryTab.memoAIPrompt.ScrollBars := ssNone;
+  QueryTab.memoAIPrompt.WordWrap := True;
+  QueryTab.memoAIPrompt.Lines.Clear;
+  QueryTab.memoAIPrompt.TextHint := 'Ask AI to write SQL... (e.g. "show all users ordered by name")';
+  QueryTab.memoAIPrompt.OnKeyDown := memoAIPromptKeyDown;
+
+  QueryTab.btnAIGenerate := TButton.Create(QueryTab.pnlAI);
+  QueryTab.btnAIGenerate.Parent := QueryTab.pnlAI;
+  QueryTab.btnAIGenerate.Align := alRight;
+  QueryTab.btnAIGenerate.Caption := 'Generate SQL';
+  QueryTab.btnAIGenerate.Width := 100;
+  QueryTab.btnAIGenerate.OnClick := btnAIGenerateClick;
+
+  QueryTab.lblAIExplain := TLabel.Create(QueryTab.pnlAI);
+  QueryTab.lblAIExplain.Parent := QueryTab.pnlAI;
+  QueryTab.lblAIExplain.Align := alBottom;
+  QueryTab.lblAIExplain.Caption := '';
+  QueryTab.lblAIExplain.Height := 18;
+  QueryTab.lblAIExplain.Font.Color := clNavy;
 
   QueryTab.spltQuery := TSplitter.Create(QueryTab.TabSheet);
   QueryTab.spltQuery.Parent := QueryTab.TabSheet;

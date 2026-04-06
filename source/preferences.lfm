@@ -1998,6 +1998,73 @@ object frmPreferences: TfrmPreferences
         OnDblClick = editCustomSnippetsDirectoryRightButtonClick
       end
     end
+    object tabAI: TTabSheet
+      Caption = 'AI'
+      object lblAnthropicApiKey: TLabel
+        AnchorSideLeft.Control = tabAI
+        AnchorSideTop.Control = tabAI
+        AnchorSideTop.Side = asrBottom
+        Left = 8
+        Height = 18
+        Top = 16
+        Width = 120
+        AutoSize = True
+        Caption = 'Anthropic API key:'
+      end
+      object editAnthropicApiKey: TEdit
+        AnchorSideLeft.Control = lblAnthropicApiKey
+        AnchorSideTop.Control = lblAnthropicApiKey
+        AnchorSideTop.Side = asrBottom
+        AnchorSideRight.Control = tabAI
+        AnchorSideRight.Side = asrBottom
+        Left = 8
+        Height = 23
+        Top = 38
+        Width = 580
+        Anchors = [akTop, akLeft, akRight]
+        PasswordChar = '*'
+        TextHint = 'sk-ant-...'
+        OnChange = Modified
+      end
+      object lblClaudeModel: TLabel
+        AnchorSideLeft.Control = tabAI
+        AnchorSideTop.Control = editAnthropicApiKey
+        AnchorSideTop.Side = asrBottom
+        Left = 8
+        Height = 18
+        Top = 70
+        Width = 80
+        AutoSize = True
+        Caption = 'Claude model:'
+      end
+      object comboClaudeModel: TComboBox
+        AnchorSideLeft.Control = lblClaudeModel
+        AnchorSideTop.Control = lblClaudeModel
+        AnchorSideTop.Side = asrBottom
+        Left = 8
+        Height = 23
+        Top = 92
+        Width = 300
+        Items.Strings = (
+          'claude-haiku-4-5-20251001'
+          'claude-sonnet-4-6'
+          'claude-opus-4-6'
+        )
+        Style = csDropDownList
+        OnChange = Modified
+      end
+      object lblAIHint: TLabel
+        AnchorSideLeft.Control = tabAI
+        AnchorSideTop.Control = comboClaudeModel
+        AnchorSideTop.Side = asrBottom
+        Left = 8
+        Height = 18
+        Top = 124
+        Width = 500
+        AutoSize = True
+        Caption = 'Use Ctrl+Enter in the AI prompt strip in the query editor to generate SQL.'
+      end
+    end
   end
   object btnCancel: TButton
     AnchorSideRight.Control = btnApply

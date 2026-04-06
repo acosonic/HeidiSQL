@@ -422,6 +422,10 @@ if TargetOS=&apos;darwin&apos; then
         <ResourceBaseClass Value="Form"/>
       </Unit>
       <Unit>
+        <Filename Value="source\aihelper.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
         <Filename Value="source\event_editor.pas"/>
         <IsPartOfProject Value="True"/>
         <ComponentName Value="frmEventEditor"/>

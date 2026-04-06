@@ -178,6 +178,12 @@ type
     Label5: TLabel;
     lblReformatter: TLabel;
     comboReformatter: TComboBox;
+    tabAI: TTabSheet;
+    lblAnthropicApiKey: TLabel;
+    editAnthropicApiKey: TEdit;
+    lblClaudeModel: TLabel;
+    comboClaudeModel: TComboBox;
+    lblAIHint: TLabel;
     procedure editTerminalButtonClick(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FormShow(Sender: TObject);
@@ -411,6 +417,13 @@ begin
   AppSettings.WriteInt(asTabIconsGrayscaleMode, comboTabIconsGrayscaleMode.ItemIndex);
   AppSettings.WriteInt(asReformatterNoDialog, comboReformatter.ItemIndex);
   AppSettings.WriteString(asCustomSnippetsDirectory, editCustomSnippetsDirectory.Text);
+
+  // AI settings
+  AppSettings.WriteString(asAnthropicApiKey, editAnthropicApiKey.Text);
+  if comboClaudeModel.ItemIndex >= 0 then
+    AppSettings.WriteString(asClaudeModel, comboClaudeModel.Text)
+  else
+    AppSettings.WriteString(asClaudeModel, comboClaudeModel.Text);
 
   // Set relevant properties in mainform
   MainForm.ApplyFontToGrids;
@@ -723,6 +736,10 @@ begin
   comboTabIconsGrayscaleMode.ItemIndex := AppSettings.ReadInt(asTabIconsGrayscaleMode);
   comboReformatter.ItemIndex := AppSettings.ReadInt(asReformatterNoDialog);
   editCustomSnippetsDirectory.Text := AppSettings.ReadString(asCustomSnippetsDirectory);
+
+  // AI settings
+  editAnthropicApiKey.Text := AppSettings.ReadString(asAnthropicApiKey);
+  comboClaudeModel.Text := AppSettings.ReadString(asClaudeModel);
 
   // Disable global shortcuts
   MainForm.ActionList1.State := asSuspended;

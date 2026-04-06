@@ -236,6 +236,7 @@ type
     asSequalSuggestWindowWidth, asSequalSuggestWindowHeight, asSequalSuggestPrompt, asSequalSuggestRecentPrompts,
     asReformatter, asReformatterNoDialog, asAlwaysGenerateFilter, asDisplayReverseForeignKeys,
     asGenerateDataNumRows, asGenerateDataNullAmount, asWebOnceAction, asDisplayLogPanel, asDisplayTreeFilters,
+    asAnthropicApiKey, asClaudeModel,
     asUnused);
   TAppSetting = record
     Name: String;
@@ -3875,6 +3876,8 @@ begin
   InitSetting(asCreateDbCollation,                'CreateDbCollation',                     0, False, '');
   InitSetting(asRealTrailingZeros,                'RealTrailingZeros',                     1);
   InitSetting(asWebOnceAction,                    'WebOnceAction',                         0, False, DateToStr(DateTimeNever));
+  InitSetting(asAnthropicApiKey,                  'AnthropicApiKey',                       0, False, '');
+  InitSetting(asClaudeModel,                      'ClaudeModel',                           0, False, 'claude-haiku-4-5-20251001');
 
   // Initialization values
   FRestoreTabsInitValue := ReadBool(asRestoreTabs);
