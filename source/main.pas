@@ -1957,7 +1957,7 @@ begin
   // AI prompt strip for the first (static) query tab
   QueryTab.pnlAI := TPanel.Create(QueryTab.pnlMemo);
   QueryTab.pnlAI.Parent := QueryTab.pnlMemo;
-  QueryTab.pnlAI.Align := alBottom;
+  QueryTab.pnlAI.Align := alTop;
   QueryTab.pnlAI.Height := 58;
   QueryTab.pnlAI.BevelOuter := bvNone;
   QueryTab.pnlAI.BorderStyle := bsSingle;
@@ -12572,7 +12572,7 @@ begin
   // AI prompt strip at bottom of the editor panel
   QueryTab.pnlAI := TPanel.Create(QueryTab.pnlMemo);
   QueryTab.pnlAI.Parent := QueryTab.pnlMemo;
-  QueryTab.pnlAI.Align := alBottom;
+  QueryTab.pnlAI.Align := alTop;
   QueryTab.pnlAI.Height := 58;
   QueryTab.pnlAI.BevelOuter := bvNone;
   QueryTab.pnlAI.BorderStyle := bsSingle;
