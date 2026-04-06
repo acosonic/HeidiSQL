@@ -2000,69 +2000,70 @@ object frmPreferences: TfrmPreferences
     end
     object tabAI: TTabSheet
       Caption = 'AI'
+      ClientHeight = 414
+      ClientWidth = 694
       object lblAnthropicApiKey: TLabel
-        AnchorSideLeft.Control = tabAI
-        AnchorSideTop.Control = tabAI
-        AnchorSideTop.Side = asrBottom
         Left = 8
-        Height = 18
-        Top = 16
+        Height = 15
+        Top = 8
         Width = 120
         AutoSize = True
+        BorderSpacing.Around = 4
         Caption = 'Anthropic API key:'
       end
       object editAnthropicApiKey: TEdit
-        AnchorSideLeft.Control = lblAnthropicApiKey
         AnchorSideTop.Control = lblAnthropicApiKey
         AnchorSideTop.Side = asrBottom
         AnchorSideRight.Control = tabAI
         AnchorSideRight.Side = asrBottom
         Left = 8
         Height = 23
-        Top = 38
+        Top = 31
         Width = 580
         Anchors = [akTop, akLeft, akRight]
+        BorderSpacing.Around = 4
         PasswordChar = '*'
+        TabOrder = 0
         TextHint = 'sk-ant-...'
         OnChange = Modified
       end
       object lblClaudeModel: TLabel
-        AnchorSideLeft.Control = tabAI
         AnchorSideTop.Control = editAnthropicApiKey
         AnchorSideTop.Side = asrBottom
         Left = 8
-        Height = 18
-        Top = 70
+        Height = 15
+        Top = 62
         Width = 80
         AutoSize = True
+        BorderSpacing.Around = 4
         Caption = 'Claude model:'
       end
       object comboClaudeModel: TComboBox
-        AnchorSideLeft.Control = lblClaudeModel
         AnchorSideTop.Control = lblClaudeModel
         AnchorSideTop.Side = asrBottom
         Left = 8
         Height = 23
-        Top = 92
+        Top = 85
         Width = 300
+        BorderSpacing.Around = 4
         Items.Strings = (
           'claude-haiku-4-5-20251001'
           'claude-sonnet-4-6'
           'claude-opus-4-6'
         )
-        Style = csDropDownList
+        TabOrder = 1
         OnChange = Modified
       end
       object lblAIHint: TLabel
-        AnchorSideLeft.Control = tabAI
         AnchorSideTop.Control = comboClaudeModel
         AnchorSideTop.Side = asrBottom
         Left = 8
-        Height = 18
-        Top = 124
-        Width = 500
+        Height = 15
+        Top = 116
+        Width = 100
         AutoSize = True
-        Caption = 'Use Ctrl+Enter in the AI prompt strip in the query editor to generate SQL.'
+        BorderSpacing.Around = 4
+        Caption = 'Ctrl+Enter in the query editor AI strip generates SQL from plain English.'
       end
     end
   end
