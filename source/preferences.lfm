@@ -1999,7 +1999,7 @@ object frmPreferences: TfrmPreferences
       end
     end
     object tabAI: TTabSheet
-      Caption = '🤖 AI'
+      Caption = 'AI'
       ClientHeight = 414
       ClientWidth = 694
     end

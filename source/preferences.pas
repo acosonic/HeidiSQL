@@ -234,6 +234,7 @@ type
     FRestartOptionApplied: Boolean;
     editAnthropicApiKey: TEdit;
     comboClaudeModel: TComboBox;
+    chkAIEnabled: TCheckBox;
     procedure InitLanguages;
     procedure SelectDirectory(Sender: TObject; NewFolderButton: Boolean);
     function EnsureShortcutIsUnused(RequestShortcut: TShortCut): Boolean;
@@ -431,10 +432,9 @@ begin
 
   // AI settings
   AppSettings.WriteString(asAnthropicApiKey, editAnthropicApiKey.Text);
-  if comboClaudeModel.ItemIndex >= 0 then
-    AppSettings.WriteString(asClaudeModel, comboClaudeModel.Text)
-  else
-    AppSettings.WriteString(asClaudeModel, comboClaudeModel.Text);
+  AppSettings.WriteString(asClaudeModel, comboClaudeModel.Text);
+  AppSettings.WriteBool(asAIEnabled, chkAIEnabled.Checked);
+  MainForm.ApplyAIVisibility;
 
   // Set relevant properties in mainform
   MainForm.ApplyFontToGrids;
@@ -647,12 +647,21 @@ begin
   comboClaudeModel.Items.Add('claude-sonnet-4-6');
   comboClaudeModel.Items.Add('claude-opus-4-6');
   comboClaudeModel.OnChange := AISettingChanged;
+  chkAIEnabled := TCheckBox.Create(tabAI);
+  chkAIEnabled.Parent := tabAI;
+  chkAIEnabled.Left := 8; chkAIEnabled.Top := 114;
+  chkAIEnabled.Caption := 'Show AI prompt strip in query editor';
+  chkAIEnabled.AutoSize := True;
+  chkAIEnabled.OnChange := AISettingChanged;
   with TLabel.Create(tabAI) do begin
     Parent := tabAI;
-    Left := 8; Top := 114;
-    Caption := 'Ctrl+Enter in the AI prompt strip below the SQL editor generates SQL.';
+    Left := 8; Top := 140;
+    Caption := 'When enabled, Ctrl+Enter in the prompt strip generates SQL using the model above.';
     AutoSize := True;
   end;
+
+  // Set robot icon on the AI tab (icon is inserted into ImageListMain by PrepareImageList)
+  tabAI.ImageIndex := MainForm.RobotIconIndex;
 end;
 
 
@@ -782,6 +791,7 @@ begin
   // AI settings
   editAnthropicApiKey.Text := AppSettings.ReadString(asAnthropicApiKey);
   comboClaudeModel.Text := AppSettings.ReadString(asClaudeModel);
+  chkAIEnabled.Checked := AppSettings.ReadBool(asAIEnabled);
 
   // Disable global shortcuts
   MainForm.ActionList1.State := asSuspended;

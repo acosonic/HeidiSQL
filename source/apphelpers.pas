@@ -236,7 +236,7 @@ type
     asSequalSuggestWindowWidth, asSequalSuggestWindowHeight, asSequalSuggestPrompt, asSequalSuggestRecentPrompts,
     asReformatter, asReformatterNoDialog, asAlwaysGenerateFilter, asDisplayReverseForeignKeys,
     asGenerateDataNumRows, asGenerateDataNullAmount, asWebOnceAction, asDisplayLogPanel, asDisplayTreeFilters,
-    asAnthropicApiKey, asClaudeModel,
+    asAnthropicApiKey, asClaudeModel, asAIEnabled,
     asUnused);
   TAppSetting = record
     Name: String;
@@ -436,6 +436,7 @@ type
   // This returns a stable, lowercase name "heidisql", used for configuration files and translations
   function GetApplicationName: String;
   procedure CopyImageList(SourceList, TargetList: TImageList; AppendDisabled: Boolean);
+  procedure DrawRobotIcon(Bmp: TBitmap; Size: Integer);
 
 var
   AppSettings: TAppSettings;
@@ -3044,6 +3045,106 @@ begin
 end;
 
 
+procedure DrawRobotIcon(Bmp: TBitmap; Size: Integer);
+// Pixel format matches TCustomImageListResolution.FillDescription:
+//   ByteOrder=MSBFirst, shifts: Blue=24, Green=16, Red=8, Alpha=0
+// In memory (byte order): B, G, R, A  per pixel
+type
+  TPixel = packed record B, G, R, A: Byte end;
+  PPixelRow = ^TPixelRow;
+  TPixelRow = array[0..16383] of TPixel;
+
+  procedure PutPx(RawData: PByte; cx, cy: Integer; r, g, b, a: Byte);
+  var Row: PPixelRow;
+  begin
+    if (cx >= 0) and (cx < Size) and (cy >= 0) and (cy < Size) then begin
+      Row := PPixelRow(RawData + cy * Size * 4);
+      Row[cx].B := b; Row[cx].G := g; Row[cx].R := r; Row[cx].A := a;
+    end;
+  end;
+
+  procedure FillR(RawData: PByte; x1, y1, x2, y2: Integer; r, g, b, a: Byte);
+  var lx, ly: Integer;
+  begin
+    for ly := y1 to y2 do
+      for lx := x1 to x2 do
+        PutPx(RawData, lx, ly, r, g, b, a);
+  end;
+
+  procedure HLine(RawData: PByte; x1, x2, cy: Integer; r, g, b, a: Byte);
+  var lx: Integer;
+  begin
+    for lx := x1 to x2 do PutPx(RawData, lx, cy, r, g, b, a);
+  end;
+
+  procedure VLine(RawData: PByte; cx, y1, y2: Integer; r, g, b, a: Byte);
+  var ly: Integer;
+  begin
+    for ly := y1 to y2 do PutPx(RawData, cx, ly, r, g, b, a);
+  end;
+
+  function Sc(n: Single): Integer; begin Result := Round(n * Size / 16.0) end;
+
+var
+  RawImg: TRawImage;
+  D: PByte;
+begin
+  // Build TRawImage using the exact format TImageList uses internally
+  RawImg.Init;
+  with RawImg.Description do begin
+    Format             := ricfRGBA;
+    PaletteColorCount  := 0;
+    MaskBitsPerPixel   := 0;
+    Depth              := 32;
+    Width              := Size;
+    Height             := Size;
+    BitOrder           := riboBitsInOrder;
+    ByteOrder          := riboMSBFirst;
+    LineOrder          := riloTopToBottom;
+    BitsPerPixel       := 32;
+    LineEnd            := rileDWordBoundary;
+    RedPrec            := 8; RedShift   := 8;
+    GreenPrec          := 8; GreenShift := 16;
+    BluePrec           := 8; BlueShift  := 24;
+    AlphaPrec          := 8; AlphaShift := 0;
+  end;
+  RawImg.CreateData(True);  // allocate + zero (all transparent)
+  D := RawImg.Data;
+
+  // Antenna stick
+  VLine(D, Sc(7.5), Sc(0), Sc(2.5), 100, 100, 100, 220);
+
+  // Antenna ball (3 pixels wide)
+  PutPx(D, Sc(6.5), Sc(0), 160, 160, 160, 240);
+  PutPx(D, Sc(7.5), Sc(0), 210, 210, 210, 255);
+  PutPx(D, Sc(8.5), Sc(0), 160, 160, 160, 240);
+
+  // Head border
+  HLine(D, Sc(2), Sc(13), Sc(3),   48,  96, 168, 255);
+  HLine(D, Sc(2), Sc(13), Sc(13),  48,  96, 168, 255);
+  VLine(D, Sc(2),  Sc(3), Sc(13),  48,  96, 168, 255);
+  VLine(D, Sc(13), Sc(3), Sc(13),  48,  96, 168, 255);
+
+  // Head fill
+  FillR(D, Sc(3), Sc(4), Sc(12), Sc(12), 80, 148, 228, 255);
+
+  // Left eye
+  FillR(D, Sc(3), Sc(5), Sc(5), Sc(7), 220, 240, 255, 255);
+
+  // Right eye
+  FillR(D, Sc(10), Sc(5), Sc(12), Sc(7), 220, 240, 255, 255);
+
+  // Mouth
+  HLine(D, Sc(4), Sc(11), Sc(10), 180, 220, 255, 255);
+  if Size >= 24 then
+    HLine(D, Sc(4), Sc(11), Sc(11), 180, 220, 255, 255);
+
+  // Convert RawImage → TBitmap (Qt5 will see proper alpha channel)
+  Bmp.LoadFromRawImage(RawImg, False);
+  RawImg.FreeData;
+end;
+
+
 { Threading stuff }
 
 constructor TQueryThread.Create(Connection: TDBConnection; Batch: TSQLBatch; TabNumber: Integer);
@@ -3878,6 +3979,7 @@ begin
   InitSetting(asWebOnceAction,                    'WebOnceAction',                         0, False, DateToStr(DateTimeNever));
   InitSetting(asAnthropicApiKey,                  'AnthropicApiKey',                       0, False, '');
   InitSetting(asClaudeModel,                      'ClaudeModel',                           0, False, 'claude-haiku-4-5-20251001');
+  InitSetting(asAIEnabled,                        'AIEnabled',                             0, True,  '');
 
   // Initialization values
   FRestoreTabsInitValue := ReadBool(asRestoreTabs);

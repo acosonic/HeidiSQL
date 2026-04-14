@@ -15,7 +15,7 @@ uses
   LazStringUtils, dbconnection, dbstructures, dbstructures.mysql, generic_types,
   apphelpers, extra_controls, createdatabase, SynEditMarkup, SynEditMarkupBracket,
   searchreplace, ImgList, IniFiles, LazFileUtils, LazUTF8, tabletools,
-  lazaruscompat, extfiledialog, process, SynEditMiscClasses, Contnrs, aihelper;
+  lazaruscompat, extfiledialog, process, SynEditMiscClasses, Contnrs, aihelper, GraphType;
 
 
 type
@@ -1300,6 +1300,7 @@ type
     FCurrentPixelsPerInch: Integer;
     FPreCacheConnection: TDBConnection;
     FPreCacheDatabase: String;
+    FPreCacheColumnIndex: Integer;
 
     // Host subtabs backend structures
     FHostListResults: TDBQueryList;
@@ -1329,6 +1330,7 @@ type
     procedure UpdateFilterPanel(Sender: TObject);
     procedure ConnectionReady(Connection: TDBConnection; Database: String);
     procedure AsyncPreCacheDB(Data: PtrInt);
+    procedure AsyncPreCacheColumns(Data: PtrInt);
     procedure DatabaseChanged(Connection: TDBConnection; Database: String);
     procedure btnAIGenerateClick(Sender: TObject);
     procedure memoAIPromptKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
@@ -1354,6 +1356,7 @@ type
   public
     QueryTabs: TQueryTabList;
     ActiveObjectEditor: TDBObjectEditor;
+    RobotIconIndex: Integer;
     FileEncodings: TStringList;
     ImportSettingsDone: Boolean;
 
@@ -1402,6 +1405,7 @@ type
     property ActiveDbObj: TDBObject read FActiveDbObj write SetActiveDBObj;
     property LogToFile: Boolean read FLogToFile write SetLogToFile;
     procedure RefreshTree(FocusNewObject: TDBObject=nil);
+    procedure ApplyAIVisibility;
     function GetRootNode(Tree: TVirtualStringTree; Connection: TDBConnection): PVirtualNode;
     function FindDBObjectNode(Tree: TVirtualStringTree; Obj: TDBObject): PVirtualNode;
     function FindDBNode(Tree: TVirtualStringTree; Connection: TDBConnection; db: String): PVirtualNode;
@@ -1961,7 +1965,7 @@ begin
   QueryTab.pnlAI.Height := 58;
   QueryTab.pnlAI.BevelOuter := bvNone;
   QueryTab.pnlAI.BorderStyle := bsSingle;
-  QueryTab.pnlAI.Visible := True;
+  QueryTab.pnlAI.Visible := AppSettings.ReadBool(asAIEnabled);
   QueryTab.memoAIPrompt := TMemo.Create(QueryTab.pnlAI);
   QueryTab.memoAIPrompt.Parent := QueryTab.pnlAI;
   QueryTab.memoAIPrompt.Align := alClient;
@@ -1979,8 +1983,10 @@ begin
   QueryTab.lblAIExplain.Parent := QueryTab.pnlAI;
   QueryTab.lblAIExplain.Align := alBottom;
   QueryTab.lblAIExplain.Caption := '';
-  QueryTab.lblAIExplain.Height := 18;
+  QueryTab.lblAIExplain.Height := 20;
   QueryTab.lblAIExplain.Font.Color := clNavy;
+  QueryTab.lblAIExplain.BorderSpacing.Left := 4;
+  QueryTab.lblAIExplain.BorderSpacing.Bottom := 3;
 
   QueryTabs := TQueryTabList.Create(True);
   QueryTabs.Add(QueryTab);
@@ -9223,6 +9229,13 @@ var
   IconPack: String;
   WantedImageCollection: TComponent;
   SourceList: TImageList;
+  i, ResIdx, N: Integer;
+  SavedBmps: array of array of TRasterImage;
+  RobotColorBmps, RobotGrayBmps: array of TRasterImage;
+  TempList: TImageList;
+  TempBmp: TBitmap;
+const
+  Resolutions: array of Integer = [16, 24, 32, 48];
 begin
   // Load preferred ImageList into ImageListMain
   if ImageListIcons8.Count = 0 then begin
@@ -9234,6 +9247,66 @@ begin
     SourceList := WantedImageCollection as TImageList;
     // Add all icons again in disabled/grayscale mode, used in TExtForm.PageControlTabHighlight
     CopyImageList(SourceList, ImageListMain, True);
+  end;
+
+  // Insert robot icon at position N (between color and gray halves) so that
+  // PageControlTabHighlight can toggle color<->gray correctly.
+  // ImageListMain: [color_0..color_{N-1}, gray_0..gray_{N-1}] → 2N icons
+  // After insert: [color_0..color_{N-1}, color_robot, gray_0..gray_{N-1}, gray_robot]
+  N := ImageListMain.Count div 2;
+  RobotIconIndex := N;
+
+  // Save all 2N bitmaps at all resolutions
+  SetLength(SavedBmps, 2 * N);
+  for i := 0 to 2 * N - 1 do begin
+    SetLength(SavedBmps[i], Length(Resolutions));
+    for ResIdx := Low(Resolutions) to High(Resolutions) do begin
+      TempBmp := TBitmap.Create;
+      ImageListMain.Resolution[Resolutions[ResIdx]].GetBitmap(i, TempBmp);
+      SavedBmps[i][ResIdx] := TempBmp;
+    end;
+  end;
+
+  // Create robot color bitmaps
+  SetLength(RobotColorBmps, Length(Resolutions));
+  for ResIdx := Low(Resolutions) to High(Resolutions) do begin
+    TempBmp := TBitmap.Create;
+    DrawRobotIcon(TempBmp, Resolutions[ResIdx]);
+    RobotColorBmps[ResIdx] := TempBmp;
+  end;
+
+  // Create robot gray bitmaps via a temp image list (uses built-in gdeDisabled conversion)
+  TempList := TImageList.Create(nil);
+  try
+    TempList.RegisterResolutions(Resolutions);
+    TempList.AddMultipleResolutions(RobotColorBmps);
+    SetLength(RobotGrayBmps, Length(Resolutions));
+    for ResIdx := Low(Resolutions) to High(Resolutions) do begin
+      TempBmp := TBitmap.Create;
+      TempList.Resolution[Resolutions[ResIdx]].GetBitmap(0, TempBmp, gdeDisabled);
+      RobotGrayBmps[ResIdx] := TempBmp;
+    end;
+  finally
+    TempList.Free;
+  end;
+
+  // Rebuild ImageListMain with robot at correct position
+  ImageListMain.Clear;
+  ImageListMain.RegisterResolutions(Resolutions);
+  for i := 0 to N - 1 do
+    ImageListMain.AddMultipleResolutions(SavedBmps[i]);
+  ImageListMain.AddMultipleResolutions(RobotColorBmps);
+  for i := N to 2 * N - 1 do
+    ImageListMain.AddMultipleResolutions(SavedBmps[i]);
+  ImageListMain.AddMultipleResolutions(RobotGrayBmps);
+
+  // Free all saved bitmaps
+  for i := 0 to 2 * N - 1 do
+    for ResIdx := Low(Resolutions) to High(Resolutions) do
+      SavedBmps[i][ResIdx].Free;
+  for ResIdx := Low(Resolutions) to High(Resolutions) do begin
+    RobotColorBmps[ResIdx].Free;
+    RobotGrayBmps[ResIdx].Free;
   end;
 end;
 
@@ -9940,8 +10013,42 @@ end;
 
 procedure TMainForm.AsyncPreCacheDB(Data: PtrInt);
 begin
-  if Assigned(FPreCacheConnection) and (FPreCacheDatabase <> '') then
+  if Assigned(FPreCacheConnection) and (FPreCacheDatabase <> '') then begin
     FPreCacheConnection.GetDbObjects(FPreCacheDatabase);
+    FPreCacheColumnIndex := 0;
+    Application.QueueAsyncCall(AsyncPreCacheColumns, 0);
+  end;
+end;
+
+procedure TMainForm.AsyncPreCacheColumns(Data: PtrInt);
+var
+  Objects: TDBObjectList;
+  Obj: TDBObject;
+  Cols: TTableColumnList;
+begin
+  if not Assigned(FPreCacheConnection) or (FPreCacheDatabase = '') then Exit;
+  try
+    Objects := FPreCacheConnection.GetDbObjects(FPreCacheDatabase);
+  except
+    Exit;
+  end;
+  if not Assigned(Objects) then Exit;
+  // Skip non-table objects
+  while FPreCacheColumnIndex < Objects.Count do begin
+    Obj := Objects[FPreCacheColumnIndex];
+    Inc(FPreCacheColumnIndex);
+    if Obj.NodeType in [lntTable, lntView] then begin
+      try
+        Cols := Obj.TableColumns;
+        Cols.Free;
+      except
+      end;
+      // Queue next table as separate async call so UI stays responsive
+      if FPreCacheColumnIndex < Objects.Count then
+        Application.QueueAsyncCall(AsyncPreCacheColumns, 0);
+      Exit;
+    end;
+  end;
 end;
 
 
@@ -10016,6 +10123,17 @@ begin
     Tab.Memo.Lines.Text := SQL;
     Tab.Memo.TrySetFocus;
   end;
+end;
+
+
+procedure TMainForm.ApplyAIVisibility;
+var
+  Show: Boolean;
+  i: Integer;
+begin
+  Show := AppSettings.ReadBool(asAIEnabled);
+  for i := 0 to QueryTabs.Count - 1 do
+    QueryTabs[i].pnlAI.Visible := Show;
 end;
 
 
@@ -12576,7 +12694,7 @@ begin
   QueryTab.pnlAI.Height := 58;
   QueryTab.pnlAI.BevelOuter := bvNone;
   QueryTab.pnlAI.BorderStyle := bsSingle;
-  QueryTab.pnlAI.Visible := True;
+  QueryTab.pnlAI.Visible := AppSettings.ReadBool(asAIEnabled);
 
   QueryTab.memoAIPrompt := TMemo.Create(QueryTab.pnlAI);
   QueryTab.memoAIPrompt.Parent := QueryTab.pnlAI;
@@ -12598,8 +12716,10 @@ begin
   QueryTab.lblAIExplain.Parent := QueryTab.pnlAI;
   QueryTab.lblAIExplain.Align := alBottom;
   QueryTab.lblAIExplain.Caption := '';
-  QueryTab.lblAIExplain.Height := 18;
+  QueryTab.lblAIExplain.Height := 20;
   QueryTab.lblAIExplain.Font.Color := clNavy;
+  QueryTab.lblAIExplain.BorderSpacing.Left := 4;
+  QueryTab.lblAIExplain.BorderSpacing.Bottom := 3;
 
   QueryTab.spltQuery := TSplitter.Create(QueryTab.TabSheet);
   QueryTab.spltQuery.Parent := QueryTab.TabSheet;

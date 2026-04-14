@@ -28,9 +28,11 @@ type
     ntFirebird_TCPIP,
     ntFirebird_Local,
     ntMySQL_RDS,
-    ntSQLiteEncrypted
+    ntSQLiteEncrypted,
+    ntOracle_TCPIP,
+    ntOracle_SSHtunnel
     );
-  TNetTypeGroup = (ngMySQL, ngMSSQL, ngPgSQL, ngSQLite, ngInterbase);
+  TNetTypeGroup = (ngMySQL, ngMSSQL, ngPgSQL, ngSQLite, ngInterbase, ngOracle);
   TNetTypeLibs = TDictionary<TNetType, TStringList>;
 
   // SQL query ids and provider

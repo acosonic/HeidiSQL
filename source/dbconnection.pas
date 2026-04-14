@@ -15,7 +15,7 @@ uses
   RegExpr, process, Pipes, SQLDB,
   {$IFDEF HASMSSQL}MSSQLConn, SQLDBLib, DB, {$ENDIF}
   generic_types, lazaruscompat,
-  dbstructures, dbstructures.mysql, dbstructures.mssql, dbstructures.postgresql, dbstructures.sqlite, dbstructures.interbase;
+  dbstructures, dbstructures.mysql, dbstructures.mssql, dbstructures.postgresql, dbstructures.sqlite, dbstructures.interbase, dbstructures.oracle;
 
 
 type
@@ -325,6 +325,7 @@ type
       function IsAnyPostgreSQL: Boolean;
       function IsAnySQLite: Boolean;
       function IsAnyInterbase: Boolean;
+      function IsAnyOracle: Boolean;
       function IsMariaDB: Boolean;
       function IsMySQL(StrictDetect: Boolean): Boolean;
       function IsPercona: Boolean;
@@ -999,6 +1000,79 @@ type
       function TableName(Column: Integer): String; overload; override;
   end;}
 
+  // Oracle column buffer — one per defined output column
+  TOracleColBuf = record
+    Buffer:    array[0..OCI_MAX_COL_SIZE] of AnsiChar;
+    Indicator: SmallInt;
+    RetLen:    Word;
+    RetCode:   Word;
+    DataType:  Word;    // SQLT_* of source column
+  end;
+  POracleColBuf = ^TOracleColBuf;
+
+  // A complete fetched resultset stored in memory (rows × columns)
+  TOracleGridRows = class(TGridRows)
+  public
+    ColNames:    TStringList;
+    ColOrgNames: TStringList;
+    ColTypes:    Array of Word;   // SQLT_* original type per column
+    constructor Create;
+    destructor  Destroy; override;
+  end;
+  TOracleRawResults = Array of TOracleGridRows;
+
+  TOracleConnection = class(TDBConnection)
+  private
+    FLib:      TOracleLib;
+    FEnv:      POCIEnv;
+    FError:    POCIError;
+    FServer:   POCIServer;
+    FSvcCtx:   POCISvcCtx;
+    FSession:  POCISession;
+    FLastRawResults: TOracleRawResults;
+    procedure SetActive(Value: Boolean); override;
+    procedure DoBeforeConnect; override;
+    function  GetThreadId: Int64; override;
+    function  GetLastErrorCode: Cardinal; override;
+    function  GetLastErrorMsg: String; override;
+    function  GetAllDatabases: TStringList; override;
+    procedure FetchDbObjects(db: String; var Cache: TDBObjectList); override;
+    function  OCICheck(Status: Integer; CallerMsg: String=''): Boolean;
+    function  OCIGetError: String;
+  public
+    constructor Create(AOwner: TComponent); override;
+    destructor  Destroy; override;
+    property Lib: TOracleLib read FLib;
+    property LastRawResults: TOracleRawResults read FLastRawResults;
+    procedure Query(SQL: String; DoStoreResult: Boolean=False; LogCategory: TDBLogCategory=lcSQL); override;
+    function  Ping(Reconnect: Boolean): Boolean; override;
+    function  GetCreateCode(Obj: TDBObject): String; override;
+    function  GetTableColumns(Table: TDBObject): TTableColumnList; override;
+    function  GetTableKeys(Table: TDBObject): TTableKeyList; override;
+    function  GetTableForeignKeys(Table: TDBObject): TForeignKeyList; override;
+  end;
+
+  TOracleQuery = class(TDBQuery)
+  private
+    FConnection:    TOracleConnection;
+    FCurrentResults: TOracleGridRows;
+    FRecNoLocal:    Integer;
+    FResultList:    TOracleRawResults;
+    procedure SetRecNo(Value: Int64); override;
+  public
+    constructor Create(AOwner: TComponent); override;
+    destructor  Destroy; override;
+    procedure Execute(AddResult: Boolean=False; UseRawResult: Integer=-1); override;
+    function  Col(Column: Integer; IgnoreErrors: Boolean=False): String; overload; override;
+    function  ColIsPrimaryKeyPart(Column: Integer): Boolean; override;
+    function  ColIsUniqueKeyPart(Column: Integer): Boolean; override;
+    function  ColIsKeyPart(Column: Integer): Boolean; override;
+    function  IsNull(Column: Integer): Boolean; overload; override;
+    function  HasResult: Boolean; override;
+    function  DatabaseName: String; override;
+    function  TableName(Column: Integer): String; overload; override;
+  end;
+
 procedure SQLite_CollationNeededCallback(userData:Pointer; ppDb:Psqlite3; eTextRep:integer; zName:PAnsiChar); cdecl;
 function SQLite_Collation(userData: Pointer; lenA: Integer; strA: PAnsiChar; lenB: Integer; strB: PAnsiChar): Integer; cdecl;
 
@@ -1488,6 +1562,8 @@ begin
       Result := TPgConnection.Create(AOwner);
     ngSQLite:
       Result := TSQLiteConnection.Create(AOwner);
+    ngOracle:
+      Result := TOracleConnection.Create(AOwner);
     //ngInterbase:
     //  Result := TInterbaseConnection.Create(AOwner);
     else
@@ -1510,6 +1586,8 @@ begin
       Result := TPGQuery.Create(Connection);
     ngSQLite:
       Result := TSQLiteQuery.Create(Connection);
+    ngOracle:
+      Result := TOracleQuery.Create(Connection);
     //ngInterbase:
     //  Result := TInterbaseQuery.Create(Connection);
     else
@@ -1552,6 +1630,8 @@ begin
       ntInterbase_Local:        Result := PrefixInterbase+' (Local, experimental)';
       ntFirebird_TCPIP:         Result := PrefixFirebird+' (TCP/IP, experimental)';
       ntFirebird_Local:         Result := PrefixFirebird+' (Local, experimental)';
+      ntOracle_TCPIP:           Result := 'Oracle (TCP/IP)';
+      ntOracle_SSHtunnel:       Result := 'Oracle (SSH tunnel)';
     end;
   end
   else begin
@@ -1574,6 +1654,7 @@ begin
       end;
       ngSQLite:                        Result := PrefixSqlite;
       ngInterbase:                     Result := PrefixInterbase;
+      ngOracle:                        Result := 'Oracle';
     end;
   end;
 end;
@@ -1592,6 +1673,8 @@ begin
       Result := ngSQLite;
     ntInterbase_TCPIP, ntInterbase_Local, ntFirebird_TCPIP, ntFirebird_Local:
       Result := ngInterbase;
+    ntOracle_TCPIP, ntOracle_SSHtunnel:
+      Result := ngOracle;
     else begin
       // Return default net group here. Raising an exception lets the app die for some reason.
       // Reproduction: click drop-down button on "Database(s)" session setting
@@ -1604,7 +1687,13 @@ end;
 
 function TConnectionParameters.SshSupport: Boolean;
 begin
-  Result := FNetType in [ntMySQL_SSHtunnel, ntMySQL_RDS, ntPgSQL_SSHtunnel, ntMSSQL_TCPIP];
+  Result := FNetType in [ntMySQL_SSHtunnel, ntMySQL_RDS, ntPgSQL_SSHtunnel, ntMSSQL_TCPIP, ntOracle_SSHtunnel];
+end;
+
+
+function TConnectionParameters.IsAnyOracle: Boolean;
+begin
+  Result := NetTypeGroup = ngOracle;
 end;
 
 
@@ -1766,7 +1855,8 @@ begin
     ngInterbase: begin
       Result := 203;
       if IsFirebird then Result := 204;
-    end
+    end;
+    ngOracle: Result := 156;  // use existing "database" icon until Oracle-specific icon is added
     else Result := ICONINDEX_SERVER;
   end;
 end;
@@ -1784,6 +1874,7 @@ begin
     ngMSSQL: Result := 0; // => autodetection by driver (previously 1433)
     ngPgSQL: Result := 5432;
     ngInterbase: Result := 3050;
+    ngOracle:    Result := 1521;
     else Result := 0;
   end;
 end;
@@ -1792,10 +1883,11 @@ end;
 function TConnectionParameters.DefaultUsername: String;
 begin
   case NetTypeGroup of
-    ngMySQL: Result := 'root';
-    ngMSSQL: Result := 'sa';
-    ngPgSQL: Result := 'postgres';
+    ngMySQL:    Result := 'root';
+    ngMSSQL:    Result := 'sa';
+    ngPgSQL:    Result := 'postgres';
     ngInterbase: Result := 'sysdba';
+    ngOracle:   Result := 'system';
     else Result := '';
   end;
 end;
@@ -1807,7 +1899,7 @@ var
 begin
   Result := '';
   case NetTypeGroup of
-    ngMySQL, ngMSSQL, ngPgSQL, ngSQLite: begin
+    ngMySQL, ngMSSQL, ngPgSQL, ngSQLite, ngOracle: begin
       AllLibs := GetLibraries;
       if AllLibs.Count > 0 then
         Result := AllLibs[0];
@@ -1955,9 +2047,17 @@ begin
       end;
       ngInterbase:
         rx.Expression := '^(gds32|ibclient|fbclient).*\.' + SharedSuffix;
+      ngOracle:
+        {$If defined(LINUX)}
+        rx.Expression := '^\s*(libclntsh)\.[^=]+=>\s*(\S+)$';
+        {$ElseIf defined(FREEBSD)}
+        rx.Expression := '(libclntsh)[^=]+=>\s*(\S+)$';
+        {$Else}
+        rx.Expression := '^(oci|libclntsh).*\.' + SharedSuffix;
+        {$EndIf}
     end;
     case NetTypeGroup of
-      ngMySQL, ngMSSQL, ngPgSQL, ngSQLite, ngInterbase: begin
+      ngMySQL, ngMSSQL, ngPgSQL, ngSQLite, ngInterbase, ngOracle: begin
         {$if defined(LINUX) or defined(FREEBSD)}
         {$If defined(LINUX)}
         // See https://serverfault.com/a/513938
@@ -3155,6 +3255,8 @@ begin
       FSqlProvider := TSQLiteProvider.Create(FParameters.NetType);
     ngInterbase:
       FSqlProvider := TInterbaseProvider.Create(FParameters.NetType);
+    ngOracle:
+      FSqlProvider := TOracleProvider.Create(FParameters.NetType);
     else
       raise Exception.CreateFmt(_(MsgUnhandledNetType), [Integer(FParameters.NetType)]);
   end;
@@ -5042,6 +5144,11 @@ begin
       Result := escChars(Text, EscChar, c1, c2, c3, c4);
     end;
 
+    ngOracle: begin
+      // Oracle: escape single quote by doubling it
+      Result := escChars(Text, '''', '''', '''', '''', '''');
+    end;
+
     else Result := '';
 
   end;
@@ -6650,6 +6757,8 @@ begin
       Result := Length(TPGConnection(Self).LastRawResults);
     ngSQLite:
       Result := Length(TSQLiteConnection(Self).LastRawResults);
+    ngOracle:
+      Result := Length(TOracleConnection(Self).LastRawResults);
     //ngInterbase:
     //  Result := Length(TInterbaseConnection(Self).LastRawResults);
     else
@@ -10059,6 +10168,634 @@ begin
 end;
 
 
+
+
+{ TOracleGridRows }
+
+constructor TOracleGridRows.Create;
+begin
+  inherited Create(True);
+  ColNames    := TStringList.Create;
+  ColOrgNames := TStringList.Create;
+end;
+
+destructor TOracleGridRows.Destroy;
+begin
+  ColNames.Free;
+  ColOrgNames.Free;
+  inherited;
+end;
+
+
+{ TOracleConnection }
+
+constructor TOracleConnection.Create(AOwner: TComponent);
+var
+  i: Integer;
+begin
+  inherited;
+  SetLength(FDatatypes, Length(OracleDatatypes));
+  for i := 0 to High(OracleDatatypes) do
+    FDatatypes[i] := OracleDatatypes[i];
+  FQuoteChar := '"';
+end;
+
+destructor TOracleConnection.Destroy;
+begin
+  if Active then Active := False;
+  FLib.Free;
+  inherited;
+end;
+
+procedure TOracleConnection.DoBeforeConnect;
+var
+  LibraryPath: String;
+begin
+  LibraryPath := GetLibDir + Parameters.LibraryOrProvider;
+  Log(lcDebug, f_('Loading Oracle library %s ...', [LibraryPath]));
+  FLib := TOracleLib.Create(LibraryPath, Parameters.DefaultLibrary);
+  Log(lcDebug, FLib.DllFile + ' loaded.');
+  inherited;
+end;
+
+function TOracleConnection.OCIGetError: String;
+var
+  ErrCode: Integer;
+  Buf: array[0..1023] of AnsiChar;
+begin
+  ErrCode := 0;
+  FillChar(Buf, SizeOf(Buf), 0);
+  FLib.OCIErrorGet(FError, 1, nil, @ErrCode, @Buf[0], SizeOf(Buf)-1, OCI_HTYPE_ERROR);
+  Result := IntToStr(ErrCode) + ': ' + String(AnsiString(PAnsiChar(@Buf[0])));
+end;
+
+function TOracleConnection.OCICheck(Status: Integer; CallerMsg: String): Boolean;
+begin
+  Result := Status in [OCI_SUCCESS, OCI_SUCCESS_WITH_INFO];
+  if not Result then begin
+    if Assigned(FError) then
+      raise EDbError.Create(OCIGetError)
+    else
+      raise EDbError.Create(f_('OCI error %d in %s', [Status, CallerMsg]));
+  end;
+end;
+
+procedure TOracleConnection.SetActive(Value: Boolean);
+var
+  ConnStr: AnsiString;
+  User, Pass: AnsiString;
+  Status:  Integer;
+begin
+  if Value then begin
+    DoBeforeConnect;
+
+    // Create OCI environment
+    Status := FLib.OCIEnvCreate(@FEnv, OCI_THREADED or OCI_OBJECT,
+      nil, nil, nil, nil, 0, nil);
+    OCICheck(Status, 'OCIEnvCreate');
+
+    // Allocate error handle
+    FLib.OCIHandleAlloc(FEnv, @FError, OCI_HTYPE_ERROR, 0, nil);
+
+    // Allocate and attach server handle
+    FLib.OCIHandleAlloc(FEnv, @FServer, OCI_HTYPE_SERVER, 0, nil);
+    ConnStr := AnsiString(Parameters.Hostname);
+    Status := FLib.OCIServerAttach(FServer, FError,
+      PAnsiChar(ConnStr), Length(ConnStr), OCI_DEFAULT);
+    OCICheck(Status, 'OCIServerAttach');
+
+    // Service context
+    FLib.OCIHandleAlloc(FEnv, @FSvcCtx, OCI_HTYPE_SVCCTX, 0, nil);
+    FLib.OCIAttrSet(FSvcCtx, OCI_HTYPE_SVCCTX, FServer, 0, OCI_ATTR_SERVER, FError);
+
+    // Session handle
+    FLib.OCIHandleAlloc(FEnv, @FSession, OCI_HTYPE_SESSION, 0, nil);
+    User := AnsiString(Parameters.Username);
+    Pass := AnsiString(Parameters.Password);
+    FLib.OCIAttrSet(FSession, OCI_HTYPE_SESSION,
+      PAnsiChar(User), Length(User), OCI_ATTR_USERNAME, FError);
+    FLib.OCIAttrSet(FSession, OCI_HTYPE_SESSION,
+      PAnsiChar(Pass), Length(Pass), OCI_ATTR_PASSWORD, FError);
+
+    Status := FLib.OCISessionBegin(FSvcCtx, FError, FSession,
+      OCI_CRED_RDBMS, OCI_DEFAULT);
+    OCICheck(Status, 'OCISessionBegin');
+    FLib.OCIAttrSet(FSvcCtx, OCI_HTYPE_SVCCTX, FSession, 0, OCI_ATTR_SESSION, FError);
+
+    FActive := True;
+    FServerVersionUntouched := GetVar('SELECT * FROM V$VERSION WHERE BANNER LIKE ''%Oracle%''');
+    DoAfterConnect;
+  end else begin
+    if FActive then begin
+      ClearCache(False);
+      if Assigned(FSession) and Assigned(FSvcCtx) then
+        FLib.OCISessionEnd(FSvcCtx, FError, FSession, OCI_DEFAULT);
+      if Assigned(FServer) then
+        FLib.OCIServerDetach(FServer, FError, OCI_DEFAULT);
+      if Assigned(FSvcCtx)  then FLib.OCIHandleFree(FSvcCtx,  OCI_HTYPE_SVCCTX);
+      if Assigned(FSession) then FLib.OCIHandleFree(FSession, OCI_HTYPE_SESSION);
+      if Assigned(FServer)  then FLib.OCIHandleFree(FServer,  OCI_HTYPE_SERVER);
+      if Assigned(FError)   then FLib.OCIHandleFree(FError,   OCI_HTYPE_ERROR);
+      if Assigned(FEnv)     then FLib.OCIHandleFree(FEnv,     OCI_HTYPE_ENV);
+      FEnv := nil; FError := nil; FServer := nil;
+      FSvcCtx := nil; FSession := nil;
+      FActive := False;
+    end;
+  end;
+end;
+
+procedure TOracleConnection.Query(SQL: String; DoStoreResult: Boolean=False; LogCategory: TDBLogCategory=lcSQL);
+var
+  StmtHandle: POCIStmt;
+  ParamHandle: POCIParam;
+  Status: Integer;
+  StmtType, ColCount, i: Cardinal;
+  ColNamePtr: PAnsiChar;
+  ColNameLen: Cardinal;
+  ColDataType: Word;
+  Rows: TOracleGridRows;
+  Row: TGridRow;
+  Val: TGridValue;
+  Bufs: Array of TOracleColBuf;
+  DefHandle: POCIDefine;
+  SQLAnsi: AnsiString;
+begin
+  inherited;
+  SetLength(FLastRawResults, 0);
+  StmtHandle := nil;
+  DefHandle  := nil;
+
+  SQLAnsi := AnsiString(SQL);
+  Status := FLib.OCIStmtPrepare2(FSvcCtx, @StmtHandle, FError,
+    PAnsiChar(SQLAnsi), Length(SQLAnsi),
+    0, nil, 1 {OCI_NTV_SYNTAX}, OCI_DEFAULT);
+  OCICheck(Status, 'OCIStmtPrepare2');
+  try
+    StmtType := 0;
+    FLib.OCIAttrGet(StmtHandle, OCI_HTYPE_STMT, @StmtType, nil, OCI_ATTR_STMT_TYPE, FError);
+
+    if StmtType = OCI_STMT_SELECT then begin
+      Status := FLib.OCIStmtExecute(FSvcCtx, StmtHandle, FError,
+        0, 0, nil, nil, OCI_DEFAULT);
+      OCICheck(Status, 'OCIStmtExecute(SELECT)');
+
+      ColCount := 0;
+      FLib.OCIAttrGet(StmtHandle, OCI_HTYPE_STMT, @ColCount, nil, OCI_ATTR_PARAM_COUNT, FError);
+
+      Rows := TOracleGridRows.Create;
+      SetLength(Rows.ColTypes, ColCount);
+      SetLength(Bufs, ColCount);
+
+      // Describe columns and register output buffers
+      for i := 0 to ColCount - 1 do begin
+        ParamHandle := nil;
+        FLib.OCIParamGet(StmtHandle, OCI_HTYPE_STMT, FError, @ParamHandle, i + 1);
+
+        ColNamePtr := nil;
+        ColNameLen := 0;
+        FLib.OCIAttrGet(ParamHandle, OCI_DTYPE_PARAM, @ColNamePtr, @ColNameLen, OCI_ATTR_NAME, FError);
+        Rows.ColNames.Add(DecodeAPIString(Copy(AnsiString(ColNamePtr), 1, ColNameLen)));
+        Rows.ColOrgNames.Add(Rows.ColNames[i]);
+
+        ColDataType := 0;
+        FLib.OCIAttrGet(ParamHandle, OCI_DTYPE_PARAM, @ColDataType, nil, OCI_ATTR_DATA_TYPE, FError);
+        Rows.ColTypes[i] := ColDataType;
+        Bufs[i].DataType  := ColDataType;
+        Bufs[i].Indicator := 0;
+        Bufs[i].RetLen    := 0;
+        Bufs[i].RetCode   := 0;
+        FillChar(Bufs[i].Buffer, SizeOf(Bufs[i].Buffer), 0);
+
+        FLib.OCIDescriptorFree(ParamHandle, OCI_DTYPE_PARAM);
+
+        DefHandle := nil;
+        FLib.OCIDefineByPos(StmtHandle, @DefHandle, FError, i + 1,
+          @Bufs[i].Buffer[0], OCI_MAX_COL_SIZE,
+          SQLT_STR,
+          @Bufs[i].Indicator, @Bufs[i].RetLen, @Bufs[i].RetCode,
+          OCI_DEFAULT);
+      end;
+
+      if DoStoreResult then begin
+        Status := FLib.OCIStmtFetch2(StmtHandle, FError, 1,
+          OCI_FETCH_NEXT, 0, OCI_DEFAULT);
+        while Status in [OCI_SUCCESS, OCI_SUCCESS_WITH_INFO] do begin
+          Row := TGridRow.Create;
+          Row.RecNo := Rows.Count;
+          for i := 0 to ColCount - 1 do begin
+            Val := TGridValue.Create;
+            Val.OldIsNull := Bufs[i].Indicator = -1;
+            if Val.OldIsNull then
+              Val.OldText := ''
+            else
+              Val.OldText := DecodeAPIString(AnsiString(PAnsiChar(@Bufs[i].Buffer[0])));
+            Row.Add(Val);
+          end;
+          Rows.Add(Row);
+          Status := FLib.OCIStmtFetch2(StmtHandle, FError, 1,
+            OCI_FETCH_NEXT, 0, OCI_DEFAULT);
+        end;
+      end;
+
+      SetLength(FLastRawResults, 1);
+      FLastRawResults[0] := Rows;
+      FRowsFound    := Rows.Count;
+      FRowsAffected := 0;
+    end else begin
+      // DML / DDL
+      Status := FLib.OCIStmtExecute(FSvcCtx, StmtHandle, FError,
+        1, 0, nil, nil, OCI_DEFAULT);
+      OCICheck(Status, 'OCIStmtExecute(DML)');
+      ColCount := 0;
+      FLib.OCIAttrGet(StmtHandle, OCI_HTYPE_STMT, @ColCount, nil, OCI_ATTR_ROW_COUNT, FError);
+      FRowsAffected := ColCount;
+      FRowsFound    := 0;
+    end;
+  finally
+    if StmtHandle <> nil then
+      FLib.OCIStmtRelease(StmtHandle, FError, nil, 0, OCI_DEFAULT);
+  end;
+end;
+
+function TOracleConnection.Ping(Reconnect: Boolean): Boolean;
+begin
+  try
+    Query('SELECT 1 FROM DUAL');
+    Result := True;
+  except
+    Result := False;
+    if Reconnect then begin
+      try Active := False; except end;
+      try Active := True;  except end;
+      Result := FActive;
+    end;
+  end;
+end;
+
+function TOracleConnection.GetThreadId: Int64;
+begin
+  Result := 0;
+end;
+
+function TOracleConnection.GetLastErrorCode: Cardinal;
+begin
+  Result := 0;
+end;
+
+function TOracleConnection.GetLastErrorMsg: String;
+begin
+  if Assigned(FError) then
+    Result := OCIGetError
+  else
+    Result := '';
+end;
+
+function TOracleConnection.GetAllDatabases: TStringList;
+begin
+  Result := inherited;
+  if not Assigned(Result) then begin
+    try
+      FAllDatabases := GetCol('SELECT USERNAME FROM ALL_USERS ORDER BY USERNAME', 0);
+    except on E:EDbError do
+      FAllDatabases := TStringList.Create;
+    end;
+    ApplyIgnoreDatabasePattern(FAllDatabases);
+    Result := FAllDatabases;
+  end;
+end;
+
+procedure TOracleConnection.FetchDbObjects(db: String; var Cache: TDBObjectList);
+var
+  obj: TDBObject;
+  Results: TDBQuery;
+begin
+  Results := nil;
+  try
+    Results := GetResults(
+      'SELECT OBJECT_NAME, OBJECT_TYPE, CREATED, LAST_DDL_TIME' +
+      ' FROM ALL_OBJECTS' +
+      ' WHERE OWNER = ' + EscapeString(db, False) +
+      ' AND OBJECT_TYPE IN (''TABLE'',''VIEW'',''PROCEDURE'',''FUNCTION'',''TRIGGER'',''PACKAGE'',''SEQUENCE'')' +
+      ' ORDER BY OBJECT_TYPE, OBJECT_NAME');
+  except
+    on E:EDbError do;
+  end;
+  if not Assigned(Results) then Exit;
+  while not Results.Eof do begin
+    obj := TDBObject.Create(Self);
+    Cache.Add(obj);
+    obj.Name     := Results.Col('OBJECT_NAME');
+    obj.Database := db;
+    obj.Created  := Now;
+    obj.Updated  := Now;
+    if      Results.Col('OBJECT_TYPE') = 'VIEW'      then obj.NodeType := lntView
+    else if Results.Col('OBJECT_TYPE') = 'PROCEDURE' then obj.NodeType := lntProcedure
+    else if Results.Col('OBJECT_TYPE') = 'FUNCTION'  then obj.NodeType := lntFunction
+    else if Results.Col('OBJECT_TYPE') = 'TRIGGER'   then obj.NodeType := lntTrigger
+    else obj.NodeType := lntTable;
+    Results.Next;
+  end;
+  Results.Free;
+end;
+
+function TOracleConnection.GetCreateCode(Obj: TDBObject): String;
+var
+  ObjTypeStr: String;
+begin
+  case Obj.NodeType of
+    lntTable:     ObjTypeStr := 'TABLE';
+    lntView:      ObjTypeStr := 'VIEW';
+    lntProcedure: ObjTypeStr := 'PROCEDURE';
+    lntFunction:  ObjTypeStr := 'FUNCTION';
+    lntTrigger:   ObjTypeStr := 'TRIGGER';
+    else ObjTypeStr := 'TABLE';
+  end;
+  try
+    Result := GetVar(
+      'SELECT DBMS_METADATA.GET_DDL(' +
+      QuoteIdent(ObjTypeStr) + ', ' +
+      QuoteIdent(UpperCase(Obj.Name)) + ', ' +
+      QuoteIdent(UpperCase(Obj.Database)) +
+      ') FROM DUAL');
+  except
+    Result := '';
+  end;
+end;
+
+function TOracleConnection.GetTableColumns(Table: TDBObject): TTableColumnList;
+var
+  ColQuery: TDBQuery;
+  Col: TTableColumn;
+begin
+  Result := TTableColumnList.Create(True);
+  ColQuery := GetResults(
+    'SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE,' +
+    ' NULLABLE, DATA_DEFAULT, COLUMN_ID' +
+    ' FROM ALL_TAB_COLUMNS' +
+    ' WHERE OWNER = ' + EscapeString(UpperCase(Table.Database)) +
+    ' AND TABLE_NAME = ' + EscapeString(UpperCase(Table.Name)) +
+    ' ORDER BY COLUMN_ID');
+  while not ColQuery.Eof do begin
+    Col := TTableColumn.Create(Self);
+    Result.Add(Col);
+    Col.Name     := ColQuery.Col('COLUMN_NAME');
+    Col.OldName  := Col.Name;
+    Col.ParseDatatype(ColQuery.Col('DATA_TYPE'));
+    Col.AllowNull    := ColQuery.Col('NULLABLE') = 'Y';
+    Col.DefaultType  := cdtNothing;
+    Col.DefaultText  := ColQuery.Col('DATA_DEFAULT');
+    if Col.DefaultText <> '' then
+      Col.DefaultType := cdtText;
+    Col.OnUpdateType := cdtNothing;
+    Col.OnUpdateText := '';
+    ColQuery.Next;
+  end;
+  ColQuery.Free;
+end;
+
+function TOracleConnection.GetTableKeys(Table: TDBObject): TTableKeyList;
+var
+  KeyQuery: TDBQuery;
+  Key: TTableKey;
+  LastKey: String;
+begin
+  Result := TTableKeyList.Create(True);
+  LastKey := '';
+  try
+    KeyQuery := GetResults(
+      'SELECT ac.CONSTRAINT_NAME, acc.COLUMN_NAME, ac.CONSTRAINT_TYPE, acc.POSITION' +
+      ' FROM ALL_CONSTRAINTS ac' +
+      ' JOIN ALL_CONS_COLUMNS acc ON acc.CONSTRAINT_NAME = ac.CONSTRAINT_NAME AND acc.OWNER = ac.OWNER' +
+      ' WHERE ac.OWNER = ' + EscapeString(UpperCase(Table.Database)) +
+      ' AND ac.TABLE_NAME = ' + EscapeString(UpperCase(Table.Name)) +
+      ' AND ac.CONSTRAINT_TYPE IN (''P'', ''U'')' +
+      ' ORDER BY ac.CONSTRAINT_TYPE DESC, ac.CONSTRAINT_NAME, acc.POSITION');
+    Key := nil;
+    while not KeyQuery.Eof do begin
+      if KeyQuery.Col('CONSTRAINT_NAME') <> LastKey then begin
+        Key := TTableKey.Create(Self);
+        Result.Add(Key);
+        LastKey := KeyQuery.Col('CONSTRAINT_NAME');
+        Key.Name := LastKey;
+        if KeyQuery.Col('CONSTRAINT_TYPE') = 'P' then
+          Key.IndexType := 'PRIMARY'
+        else
+          Key.IndexType := 'UNIQUE';
+        Key.Columns   := TStringList.Create;
+        Key.SubParts  := TStringList.Create;
+      end;
+      if Assigned(Key) then begin
+        Key.Columns.Add(KeyQuery.Col('COLUMN_NAME'));
+        Key.SubParts.Add('');
+      end;
+      KeyQuery.Next;
+    end;
+    KeyQuery.Free;
+  except
+    on E:EDbError do;
+  end;
+end;
+
+function TOracleConnection.GetTableForeignKeys(Table: TDBObject): TForeignKeyList;
+var
+  FKQuery: TDBQuery;
+  FK: TForeignKey;
+  LastFK: String;
+begin
+  Result := TForeignKeyList.Create(True);
+  LastFK := '';
+  try
+    FKQuery := GetResults(
+      'SELECT ac.CONSTRAINT_NAME, acc.COLUMN_NAME, rc.OWNER as REF_OWNER,' +
+      ' rc.TABLE_NAME as REF_TABLE, rcc.COLUMN_NAME as REF_COL,' +
+      ' ac.DELETE_RULE' +
+      ' FROM ALL_CONSTRAINTS ac' +
+      ' JOIN ALL_CONS_COLUMNS acc ON acc.CONSTRAINT_NAME = ac.CONSTRAINT_NAME AND acc.OWNER = ac.OWNER' +
+      ' JOIN ALL_CONSTRAINTS rc ON rc.CONSTRAINT_NAME = ac.R_CONSTRAINT_NAME AND rc.OWNER = ac.R_OWNER' +
+      ' JOIN ALL_CONS_COLUMNS rcc ON rcc.CONSTRAINT_NAME = rc.CONSTRAINT_NAME AND rcc.OWNER = rc.OWNER AND rcc.POSITION = acc.POSITION' +
+      ' WHERE ac.OWNER = ' + EscapeString(UpperCase(Table.Database)) +
+      ' AND ac.TABLE_NAME = ' + EscapeString(UpperCase(Table.Name)) +
+      ' AND ac.CONSTRAINT_TYPE = ''R''' +
+      ' ORDER BY ac.CONSTRAINT_NAME, acc.POSITION');
+    FK := nil;
+    while not FKQuery.Eof do begin
+      if FKQuery.Col('CONSTRAINT_NAME') <> LastFK then begin
+        FK := TForeignKey.Create(Self);
+        Result.Add(FK);
+        LastFK := FKQuery.Col('CONSTRAINT_NAME');
+        FK.KeyName        := LastFK;
+        FK.ReferenceTable := FKQuery.Col('REF_TABLE');
+        FK.Columns        := TStringList.Create;
+        FK.ForeignColumns := TStringList.Create;
+        if      FKQuery.Col('DELETE_RULE') = 'CASCADE'  then FK.OnDelete := 'CASCADE'
+        else if FKQuery.Col('DELETE_RULE') = 'SET NULL' then FK.OnDelete := 'SET NULL'
+        else FK.OnDelete := 'NO ACTION';
+        FK.OnUpdate := 'NO ACTION';  // Oracle doesn't support ON UPDATE
+      end;
+      if Assigned(FK) then begin
+        FK.Columns.Add(FKQuery.Col('COLUMN_NAME'));
+        FK.ForeignColumns.Add(FKQuery.Col('REF_COL'));
+      end;
+      FKQuery.Next;
+    end;
+    FKQuery.Free;
+  except
+    on E:EDbError do;
+  end;
+end;
+
+
+{ TOracleQuery }
+
+constructor TOracleQuery.Create(AOwner: TComponent);
+begin
+  inherited;
+  FConnection  := TOracleConnection(AOwner);
+  FRecNoLocal  := -1;
+end;
+
+destructor TOracleQuery.Destroy;
+var i: Integer;
+begin
+  for i := Length(FResultList) - 1 downto 0 do
+    FResultList[i].Free;
+  SetLength(FResultList, 0);
+  inherited;
+end;
+
+procedure TOracleQuery.SetRecNo(Value: Int64);
+var NumResults: Integer;
+begin
+  NumResults := Length(FResultList);
+  if NumResults = 0 then Exit;
+  FRecNo      := Value;
+  FRecNoLocal := Value;
+  if (FRecNoLocal >= 0) and (FRecNoLocal < FResultList[0].Count) then
+    FCurrentResults := FResultList[0]
+  else
+    FCurrentResults := nil;
+  FEof := (FRecNoLocal < 0) or (FRecNoLocal >= FRecordCount);
+end;
+
+procedure TOracleQuery.Execute(AddResult: Boolean=False; UseRawResult: Integer=-1);
+var
+  i, NumFields, NumResults: Integer;
+  LastResult: TOracleGridRows;
+  DtName: String;
+begin
+  if UseRawResult = -1 then begin
+    Connection.Query(FSQL, FStoreResult);
+    UseRawResult := 0;
+  end;
+  if Connection.ResultCount > UseRawResult then
+    LastResult := TOracleConnection(Connection).LastRawResults[UseRawResult]
+  else
+    LastResult := nil;
+
+  if AddResult and (Length(FResultList) = 0) then
+    AddResult := False;
+  if AddResult then
+    NumResults := Length(FResultList) + 1
+  else begin
+    for i := Length(FResultList) - 1 downto 0 do
+      FResultList[i].Free;
+    NumResults    := 1;
+    FRecordCount  := 0;
+    FAutoIncrementColumn := -1;
+    FEditingPrepared := False;
+  end;
+
+  if LastResult <> nil then begin
+    LogMetaInfo(NumResults);
+    SetLength(FResultList, NumResults);
+    FResultList[NumResults-1] := LastResult;
+    FRecordCount := FRecordCount + LastResult.Count;
+  end;
+
+  if not AddResult then begin
+    if HasResult then begin
+      FCurrentResults := LastResult;
+      NumFields := LastResult.ColNames.Count;
+      SetLength(FColumnTypes, NumFields);
+      SetLength(FColumnLengths, NumFields);
+      SetLength(FColumnFlags, NumFields);
+      FColumnNames.Clear;
+      FColumnOrgNames.Clear;
+      for i := 0 to NumFields - 1 do begin
+        FColumnNames.Add(LastResult.ColNames[i]);
+        FColumnOrgNames.Add(LastResult.ColOrgNames[i]);
+        DtName := 'VARCHAR2';
+        FColumnTypes[i] := FConnection.GetDatatypeByName(DtName, False);
+      end;
+      FRecNo := -1;
+      First;
+    end else begin
+      SetLength(FColumnTypes, 0);
+      SetLength(FColumnLengths, 0);
+      SetLength(FColumnFlags, 0);
+    end;
+  end;
+end;
+
+function TOracleQuery.Col(Column: Integer; IgnoreErrors: Boolean=False): String;
+var
+  Row: TGridRow;
+begin
+  Result := '';
+  if (FCurrentResults = nil) or (FRecNoLocal < 0) or
+     (FRecNoLocal >= FCurrentResults.Count) then begin
+    if not IgnoreErrors then
+      raise EDbError.CreateFmt('Column %d out of range', [Column]);
+    Exit;
+  end;
+  Row := FCurrentResults[FRecNoLocal];
+  if (Column >= 0) and (Column < Row.Count) then
+    Result := Row[Column].OldText
+  else if not IgnoreErrors then
+    raise EDbError.CreateFmt('Column %d out of range', [Column]);
+end;
+
+function TOracleQuery.ColIsPrimaryKeyPart(Column: Integer): Boolean;
+begin
+  Result := False;
+end;
+
+function TOracleQuery.ColIsUniqueKeyPart(Column: Integer): Boolean;
+begin
+  Result := False;
+end;
+
+function TOracleQuery.ColIsKeyPart(Column: Integer): Boolean;
+begin
+  Result := False;
+end;
+
+function TOracleQuery.IsNull(Column: Integer): Boolean;
+var
+  Row: TGridRow;
+begin
+  Result := True;
+  if (FCurrentResults = nil) or (FRecNoLocal < 0) or
+     (FRecNoLocal >= FCurrentResults.Count) then Exit;
+  Row := FCurrentResults[FRecNoLocal];
+  if (Column >= 0) and (Column < Row.Count) then
+    Result := Row[Column].OldIsNull;
+end;
+
+function TOracleQuery.HasResult: Boolean;
+begin
+  Result := (Length(FResultList) > 0) and (FResultList[0] <> nil);
+end;
+
+function TOracleQuery.DatabaseName: String;
+begin
+  Result := Connection.Parameters.Username;
+end;
+
+function TOracleQuery.TableName(Column: Integer): String;
+begin
+  Result := '';
+end;
 
 
 { TDBObjectComparer }
