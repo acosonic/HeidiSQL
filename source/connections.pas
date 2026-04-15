@@ -458,6 +458,7 @@ begin
   FButtonAnimationStep := 0;
   TimerButtonAnimation.Enabled := True;
   Screen.Cursor := crHourglass;
+  Application.ProcessMessages; // flush GTK2 events so cursor actually changes
   Connection := nil;
   if Mainform.InitConnection(Params, True, Connection) then
     ModalResult := mrOK
@@ -1309,7 +1310,9 @@ begin
     // Try to connect and lookup database names
     Params := CurrentParams;
     Connection := Params.CreateConnection(Self);
-    Connection.Parameters.AllDatabasesStr := '';
+    // Oracle needs a service_name to connect — keep whatever is in the field
+    if Params.NetTypeGroup <> ngOracle then
+      Connection.Parameters.AllDatabasesStr := '';
     Connection.LogPrefix := SelectedSessionPath;
     Connection.OnLog := Mainform.LogSQL;
     FPopupDatabases := TPopupMenu.Create(Self);
@@ -1592,7 +1595,7 @@ begin
       editHost.Button.Enabled := Params.IsAnySQLite;
       chkLoginPrompt.Enabled := Params.NetTypeGroup in [ngMySQL, ngMSSQL, ngPgSQL];
       chkWindowsAuth.Enabled := Params.IsAnyMSSQL or Params.IsAnyMySQL;
-      lblUsername.Enabled := (Params.NetTypeGroup in [ngMySQL, ngMSSQL, ngPgSQL, ngInterbase])
+      lblUsername.Enabled := (Params.NetTypeGroup in [ngMySQL, ngMSSQL, ngPgSQL, ngInterbase, ngOracle])
         and ((not chkLoginPrompt.Checked) or (not chkLoginPrompt.Enabled))
         and ((not chkWindowsAuth.Checked) or (not chkWindowsAuth.Enabled));
       lblUsername.Enabled := lblUsername.Enabled or (Params.NetType = ntSQLiteEncrypted);
@@ -1600,13 +1603,13 @@ begin
       editUsername.Button.Enabled := Params.NetType = ntSQLiteEncrypted;
       lblPassword.Enabled := lblUsername.Enabled;
       editPassword.Enabled := lblUsername.Enabled;
-      lblPort.Enabled := Params.NetType in [ntMySQL_TCPIP, ntMySQL_SSHtunnel, ntMySQL_ProxySQLAdmin, ntMySQL_RDS, ntMSSQL_TCPIP, ntPgSQL_TCPIP, ntPgSQL_SSHtunnel, ntInterbase_TCPIP, ntFirebird_TCPIP];
+      lblPort.Enabled := Params.NetType in [ntMySQL_TCPIP, ntMySQL_SSHtunnel, ntMySQL_ProxySQLAdmin, ntMySQL_RDS, ntMSSQL_TCPIP, ntPgSQL_TCPIP, ntPgSQL_SSHtunnel, ntInterbase_TCPIP, ntFirebird_TCPIP, ntOracle_TCPIP, ntOracle_SSHtunnel];
       spinPort.Enabled := lblPort.Enabled;
       chkCompressed.Enabled := Params.IsAnyMySQL;
-      lblDatabase.Enabled := Params.NetTypeGroup in [ngMySQL, ngMSSQL, ngPgSQL, ngInterbase];
+      lblDatabase.Enabled := Params.NetTypeGroup in [ngMySQL, ngMSSQL, ngPgSQL, ngInterbase, ngOracle];
       lblDatabase.Enabled := lblDatabase.Enabled or (Params.NetType = ntSQLiteEncrypted);
       editDatabases.Enabled := lblDatabase.Enabled;
-      editDatabases.Button.Enabled := Params.NetTypeGroup in [ngMySQL, ngMSSQL, ngPgSQL, ngInterbase];
+      editDatabases.Button.Enabled := Params.NetTypeGroup in [ngMySQL, ngMSSQL, ngPgSQL, ngInterbase, ngOracle];
       // SSH tunnel tab:
       chkSSHActive.Enabled := Params.SshSupport;
       lblSSHExe.Enabled := Params.SSHActive;

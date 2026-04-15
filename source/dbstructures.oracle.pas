@@ -36,6 +36,8 @@ const
   OCI_OBJECT             = $00000002;
   OCI_CRED_RDBMS         = 1;
   OCI_CRED_EXT           = 2;
+  OCI_SYSDBA             = 2;
+  OCI_SYSOPER            = 4;
   OCI_FETCH_NEXT         = $00000002;
   OCI_COMMIT_ON_SUCCESS  = $00000020;
   OCI_DESCRIBE_ONLY      = $00000010;
@@ -162,6 +164,8 @@ type
     OCIClientVersion: procedure(major_version, minor_version,
                        update_num, patch_num,
                        port_update_num: PInteger); cdecl;
+    OCIPing:          function(svchp, errhp: Pointer;
+                       mode: Cardinal): Integer; cdecl;
   protected
     procedure AssignProcedures; override;
   public
@@ -225,6 +229,7 @@ begin
   AssignProc(@OCIDefineByPos,   'OCIDefineByPos');
   AssignProc(@OCIErrorGet,      'OCIErrorGet');
   AssignProc(@OCIClientVersion, 'OCIClientVersion', False);
+  AssignProc(@OCIPing,          'OCIPing', False);
 end;
 
 
@@ -259,6 +264,8 @@ begin
       Result :=
         'SELECT NVL(NUM_ROWS, 0) FROM ALL_TABLES' +
         ' WHERE OWNER = %s AND TABLE_NAME = %s';
+    qUSEQuery:
+      Result := 'ALTER SESSION SET CURRENT_SCHEMA = %s';
     else
       Result := inherited;
   end;

@@ -437,10 +437,12 @@ type
   function GetApplicationName: String;
   procedure CopyImageList(SourceList, TargetList: TImageList; AppendDisabled: Boolean);
   procedure DrawRobotIcon(Bmp: TBitmap; Size: Integer);
+  procedure DrawOracleIcon(Bmp: TBitmap; Size: Integer);
 
 var
   AppSettings: TAppSettings;
   AppLanguageMoFile: TMOFile;
+  OracleIconIndex: Integer = 0;
   AppLanguageMoBasePath: String;
   MutexHandle: THandle = 0;
   SystemImageList: TImageList = nil;
@@ -1480,6 +1482,11 @@ begin
     MultiLineCount := 1;
   // Issue #2344: TBaseVirtualTree.UpdateVerticalRange crashes with ERangeError on ArchLinux
   // Fixed through form files back at 96 PPI
+  // On Linux, only override height for result grids (multi-line rows); for tree nodes
+  // keep the form-file default to avoid oversized nodes on systems with larger fonts.
+  {$IFDEF LINUX}
+  if IsResultGrid then
+  {$ENDIF}
   VT.DefaultNodeHeight := SingleLineHeight * MultiLineCount;
   if MultiLineCount > 1 then begin
     VT.BeginUpdate;
@@ -3140,6 +3147,81 @@ begin
     HLine(D, Sc(4), Sc(11), Sc(11), 180, 220, 255, 255);
 
   // Convert RawImage → TBitmap (Qt5 will see proper alpha channel)
+  Bmp.LoadFromRawImage(RawImg, False);
+  RawImg.FreeData;
+end;
+
+
+procedure DrawOracleIcon(Bmp: TBitmap; Size: Integer);
+// Replicates the Oracle SVG logo (stadium/capsule ring shape, red #FF0000)
+// SVG viewBox 24x24; outer stadium radius=6.956, inner=4.502
+// Pixel format: B, G, R, A per pixel (MSBFirst)
+type
+  TPixel = packed record B, G, R, A: Byte end;
+  PPixelRow = ^TPixelRow;
+  TPixelRow = array[0..16383] of TPixel;
+var
+  RawImg: TRawImage;
+  D: PByte;
+  x, y: Integer;
+  sx, sy, clx, dist: Single;
+  Row: PPixelRow;
+  Alpha: Byte;
+  EdgeW: Single;
+const
+  // From SVG path coordinates (viewBox 0 0 24 24)
+  CX_L  = 7.957;   // left cap center X
+  CX_R  = 16.044;  // right cap center X
+  CY_C  = 11.962;  // vertical center Y
+  R_OUT = 6.956;   // outer radius
+  R_INN = 4.502;   // inner radius (hole)
+begin
+  RawImg.Init;
+  with RawImg.Description do begin
+    Format := ricfRGBA; ByteOrder := riboMSBFirst; LineOrder := riloTopToBottom;
+    BitsPerPixel := 32; Depth := 32; Width := Size; Height := Size;
+    LineEnd := rileDWordBoundary; BitOrder := riboBitsInOrder;
+    RedPrec := 8; RedShift := 8; GreenPrec := 8; GreenShift := 16;
+    BluePrec := 8; BlueShift := 24; AlphaPrec := 8; AlphaShift := 0;
+  end;
+  RawImg.CreateData(True);
+  D := RawImg.Data;
+
+  EdgeW := 24.0 / Size;  // 1 pixel in SVG space
+
+  for y := 0 to Size - 1 do begin
+    Row := PPixelRow(D + y * Size * 4);
+    for x := 0 to Size - 1 do begin
+      // Pixel center in SVG space
+      sx := (x + 0.5) * 24.0 / Size;
+      sy := (y + 0.5) * 24.0 / Size;
+      // Distance to horizontal segment [(CX_L, CY_C)..(CX_R, CY_C)]
+      clx := sx;
+      if clx < CX_L then clx := CX_L
+      else if clx > CX_R then clx := CX_R;
+      dist := Sqrt(Sqr(sx - clx) + Sqr(sy - CY_C));
+      // Outer edge with anti-aliasing
+      if dist < R_OUT - EdgeW then Alpha := 255
+      else if dist < R_OUT then Alpha := Round(255 * (R_OUT - dist) / EdgeW)
+      else Alpha := 0;
+      // Punch out inner hole with anti-aliasing
+      if Alpha > 0 then begin
+        if dist > R_INN then begin
+          // fully in ring — keep alpha
+        end else if dist > R_INN - EdgeW then
+          Alpha := Round(Alpha * (dist - (R_INN - EdgeW)) / EdgeW)
+        else
+          Alpha := 0;
+      end;
+      if Alpha > 0 then begin
+        Row[x].B := 0;
+        Row[x].G := 0;
+        Row[x].R := 255;  // Oracle red #FF0000
+        Row[x].A := Alpha;
+      end;
+    end;
+  end;
+
   Bmp.LoadFromRawImage(RawImg, False);
   RawImg.FreeData;
 end;

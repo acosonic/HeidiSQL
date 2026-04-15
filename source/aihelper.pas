@@ -205,13 +205,15 @@ begin
         Continue;
       Lines.Add('TABLE ' + Obj.Name + ':');
       try
-        Columns := Connection.GetTableColumns(Obj);
-        if Assigned(Columns) then begin
+        Columns := Obj.TableColumns;
+        try
           for Col in Columns do begin
             Lines.Add('  ' + Col.Name + ' ' + Col.DataType.Name +
               IfThen(Col.AllowNull, ' NULL', ' NOT NULL')
             );
           end;
+        finally
+          Columns.Free;
         end;
       except
         // Skip tables where column info fails

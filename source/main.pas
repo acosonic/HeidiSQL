@@ -1357,6 +1357,7 @@ type
     QueryTabs: TQueryTabList;
     ActiveObjectEditor: TDBObjectEditor;
     RobotIconIndex: Integer;
+    OracleIconIndex: Integer;
     FileEncodings: TStringList;
     ImportSettingsDone: Boolean;
 
@@ -1976,8 +1977,8 @@ begin
   QueryTab.btnAIGenerate := TButton.Create(QueryTab.pnlAI);
   QueryTab.btnAIGenerate.Parent := QueryTab.pnlAI;
   QueryTab.btnAIGenerate.Align := alRight;
+  QueryTab.btnAIGenerate.AutoSize := True;
   QueryTab.btnAIGenerate.Caption := 'Generate SQL';
-  QueryTab.btnAIGenerate.Width := 100;
   QueryTab.btnAIGenerate.OnClick := btnAIGenerateClick;
   QueryTab.lblAIExplain := TLabel.Create(QueryTab.pnlAI);
   QueryTab.lblAIExplain.Parent := QueryTab.pnlAI;
@@ -6099,7 +6100,7 @@ begin
     if RefreshingData and (vt.Tag <> VTREE_NOTLOADED_PURGECACHE) then begin
       case DBObj.Connection.Parameters.NetTypeGroup of
         ngMSSQL: Offset := 0; // Does not support offset in all server versions
-        ngMySQL, ngPgSQL, ngSQLite: Offset := DataGridResult.RecordCount;
+        ngMySQL, ngPgSQL, ngSQLite, ngOracle, ngInterbase: Offset := DataGridResult.RecordCount;
         else raise Exception.CreateFmt(_(MsgUnhandledNetType), [Integer(DBObj.Connection.Parameters.NetType)]);
       end;
     end;
@@ -9232,6 +9233,7 @@ var
   i, ResIdx, N: Integer;
   SavedBmps: array of array of TRasterImage;
   RobotColorBmps, RobotGrayBmps: array of TRasterImage;
+  OracleColorBmps, OracleGrayBmps: array of TRasterImage;
   TempList: TImageList;
   TempBmp: TBitmap;
 const
@@ -9254,7 +9256,9 @@ begin
   // ImageListMain: [color_0..color_{N-1}, gray_0..gray_{N-1}] → 2N icons
   // After insert: [color_0..color_{N-1}, color_robot, gray_0..gray_{N-1}, gray_robot]
   N := ImageListMain.Count div 2;
-  RobotIconIndex := N;
+  RobotIconIndex        := N;
+  OracleIconIndex       := N + 1;
+  apphelpers.OracleIconIndex := N + 1;
 
   // Save all 2N bitmaps at all resolutions
   SetLength(SavedBmps, 2 * N);
@@ -9275,30 +9279,45 @@ begin
     RobotColorBmps[ResIdx] := TempBmp;
   end;
 
-  // Create robot gray bitmaps via a temp image list (uses built-in gdeDisabled conversion)
+  // Create Oracle color bitmaps
+  SetLength(OracleColorBmps, Length(Resolutions));
+  for ResIdx := Low(Resolutions) to High(Resolutions) do begin
+    TempBmp := TBitmap.Create;
+    DrawOracleIcon(TempBmp, Resolutions[ResIdx]);
+    OracleColorBmps[ResIdx] := TempBmp;
+  end;
+
+  // Create gray variants via temp image list
   TempList := TImageList.Create(nil);
   try
     TempList.RegisterResolutions(Resolutions);
     TempList.AddMultipleResolutions(RobotColorBmps);
+    TempList.AddMultipleResolutions(OracleColorBmps);
     SetLength(RobotGrayBmps, Length(Resolutions));
+    SetLength(OracleGrayBmps, Length(Resolutions));
     for ResIdx := Low(Resolutions) to High(Resolutions) do begin
       TempBmp := TBitmap.Create;
       TempList.Resolution[Resolutions[ResIdx]].GetBitmap(0, TempBmp, gdeDisabled);
       RobotGrayBmps[ResIdx] := TempBmp;
+      TempBmp := TBitmap.Create;
+      TempList.Resolution[Resolutions[ResIdx]].GetBitmap(1, TempBmp, gdeDisabled);
+      OracleGrayBmps[ResIdx] := TempBmp;
     end;
   finally
     TempList.Free;
   end;
 
-  // Rebuild ImageListMain with robot at correct position
+  // Rebuild: [color_0..N-1, robot_color, oracle_color, gray_0..N-1, robot_gray, oracle_gray]
   ImageListMain.Clear;
   ImageListMain.RegisterResolutions(Resolutions);
   for i := 0 to N - 1 do
     ImageListMain.AddMultipleResolutions(SavedBmps[i]);
   ImageListMain.AddMultipleResolutions(RobotColorBmps);
+  ImageListMain.AddMultipleResolutions(OracleColorBmps);
   for i := N to 2 * N - 1 do
     ImageListMain.AddMultipleResolutions(SavedBmps[i]);
   ImageListMain.AddMultipleResolutions(RobotGrayBmps);
+  ImageListMain.AddMultipleResolutions(OracleGrayBmps);
 
   // Free all saved bitmaps
   for i := 0 to 2 * N - 1 do
@@ -9307,6 +9326,8 @@ begin
   for ResIdx := Low(Resolutions) to High(Resolutions) do begin
     RobotColorBmps[ResIdx].Free;
     RobotGrayBmps[ResIdx].Free;
+    OracleColorBmps[ResIdx].Free;
+    OracleGrayBmps[ResIdx].Free;
   end;
 end;
 
@@ -9882,6 +9903,8 @@ begin
           SynSQLSynUsed.SQLDialect := sqlStandard;
         ngInterbase:
           SynSQLSynUsed.SQLDialect := sqlInterbase6;
+        ngOracle:
+          SynSQLSynUsed.SQLDialect := sqlStandard;
         else
           raise Exception.CreateFmt(_(MsgUnhandledNetType), [Integer(FActiveDbObj.Connection.Parameters.NetType)]);
       end;
@@ -11912,10 +11935,18 @@ begin
             ' FROM '+Conn.QuoteIdent('pg_stat_activity')
             );
         end;
+        ngOracle: begin
+          Results := Conn.GetResults(
+            'SELECT s.SID, s.USERNAME, s.MACHINE, s.SCHEMANAME, s.STATUS,' +
+            ' ROUND(s.LAST_CALL_ET), s.STATUS, q.SQL_TEXT' +
+            ' FROM V$SESSION s LEFT JOIN V$SQL q ON q.SQL_ID = s.SQL_ID' +
+            ' WHERE s.TYPE = ''USER''');
+        end;
         else begin
-          raise Exception.CreateFmt(_(MsgUnhandledNetType), [Integer(Conn.Parameters.NetType)]);
+          Results := nil;
         end;
       end;
+      if Results = nil then Exit;
       FProcessListMaxTime := 1;
       for i:=0 to Results.RecordCount-1 do begin
         FProcessListMaxTime := Max(FProcessListMaxTime, MakeInt(Results.Col(5)));
@@ -12615,25 +12646,24 @@ begin
   QueryTab.MemoLineBreaks := TLineBreaks(AppSettings.ReadInt(asLineBreakStyle));
   SynCompletionProposal.AddEditor(QueryTab.Memo);
 
-  QueryTab.spltHelpers := TSplitter.Create(QueryTab.pnlMemo);
-  QueryTab.spltHelpers.Parent := QueryTab.pnlMemo;
-  QueryTab.spltHelpers.Align := spltQueryHelpers.Align;
-  QueryTab.spltHelpers.Left := spltQueryHelpers.Left;
-  QueryTab.spltHelpers.Cursor := spltQueryHelpers.Cursor;
-  QueryTab.spltHelpers.ResizeStyle := spltQueryHelpers.ResizeStyle;
-  QueryTab.spltHelpers.Width := spltQueryHelpers.Width;
-
+  // pnlHelpers must be created BEFORE spltHelpers so the splitter can find it
   QueryTab.pnlHelpers := TPanel.Create(QueryTab.pnlMemo);
   QueryTab.pnlHelpers.Name := pnlQueryHelpers.Name + i.ToString;
   QueryTab.pnlHelpers.Parent := QueryTab.pnlMemo;
   QueryTab.pnlHelpers.Align := pnlQueryHelpers.Align;
   QueryTab.pnlHelpers.Constraints := pnlQueryHelpers.Constraints;
   QueryTab.pnlHelpers.BevelOuter := pnlQueryHelpers.BevelOuter;
-  QueryTab.pnlHelpers.Left := pnlQueryHelpers.Left;
   if Assigned(OldTab) then
     QueryTab.pnlHelpers.Width := OldTab.pnlHelpers.Width
   else
     QueryTab.pnlHelpers.Width := AppSettings.GetDefaultInt(asQueryhelperswidth);
+
+  QueryTab.spltHelpers := TSplitter.Create(QueryTab.pnlMemo);
+  QueryTab.spltHelpers.Parent := QueryTab.pnlMemo;
+  QueryTab.spltHelpers.Align := spltQueryHelpers.Align;
+  QueryTab.spltHelpers.ResizeStyle := spltQueryHelpers.ResizeStyle;
+  QueryTab.spltHelpers.ResizeAnchor := spltQueryHelpers.ResizeAnchor;
+  QueryTab.spltHelpers.Width := spltQueryHelpers.Width;
 
   QueryTab.filterHelpers := TEditButton.Create(QueryTab.pnlHelpers);
   QueryTab.filterHelpers.Name := filterQueryHelpers.Name + i.ToString;
@@ -12708,8 +12738,8 @@ begin
   QueryTab.btnAIGenerate := TButton.Create(QueryTab.pnlAI);
   QueryTab.btnAIGenerate.Parent := QueryTab.pnlAI;
   QueryTab.btnAIGenerate.Align := alRight;
+  QueryTab.btnAIGenerate.AutoSize := True;
   QueryTab.btnAIGenerate.Caption := 'Generate SQL';
-  QueryTab.btnAIGenerate.Width := 100;
   QueryTab.btnAIGenerate.OnClick := btnAIGenerateClick;
 
   QueryTab.lblAIExplain := TLabel.Create(QueryTab.pnlAI);
@@ -15155,6 +15185,12 @@ begin
   Frames := ExceptFrames;
   for I := 0 to ExceptFrameCount - 1 do
     Report := Report + LineEnding + BackTraceStrFunc(Frames[I]);
+  try
+    with TFileStream.Create('/tmp/heidisql_crash.txt', fmCreate) do begin
+      Write(Pointer(Report)^, Length(Report));
+      Free;
+    end;
+  except end;
   CrashDlg := TfrmCrashDialog.Create(Self);
   CrashDlg.SetDetails(Report);
   if CrashDlg.ShowModal = mrAbort then begin

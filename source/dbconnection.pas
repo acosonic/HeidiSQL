@@ -1096,6 +1096,10 @@ implementation
 
 uses apphelpers, loginform, change_password;
 
+{$IFDEF LINUX}
+function setenv(name: PAnsiChar; value: PAnsiChar; overwrite: Integer): Integer; cdecl; external 'c' name 'setenv';
+{$ENDIF}
+
 
 
 
@@ -1856,7 +1860,7 @@ begin
       Result := 203;
       if IsFirebird then Result := 204;
     end;
-    ngOracle: Result := 156;  // use existing "database" icon until Oracle-specific icon is added
+    ngOracle: Result := OracleIconIndex;
     else Result := ICONINDEX_SERVER;
   end;
 end;
@@ -4713,9 +4717,16 @@ begin
         end;
       end;
     end;
-    else begin
-      raise EDbError.CreateFmt(_(MsgUnhandledNetType), [Integer(FParameters.NetType)]);
+    ngOracle: begin
+      // "Oracle Database 19c ... Release 19.3.0.0.0"
+      rx.Expression := 'Release\s+(\d+)\.(\d+)\.(\d+)';
+      if rx.Exec(FServerVersionUntouched) then
+        Result := StrToIntDef(rx.Match[1], 0) *10000 +
+          StrToIntDef(rx.Match[2], 0) *100 +
+          StrToIntDef(rx.Match[3], 0);
     end;
+    else
+      Result := 0;
   end;
   rx.Free;
 end;
@@ -4739,9 +4750,14 @@ begin
       minor := ServerVersionInt mod (ServerVersionInt div 100);
       Result := IntToStr(major) + '.' + IntToStr(minor);
     end;
-    else begin
-      raise EDbError.CreateFmt(_(MsgUnhandledNetType), [Integer(FParameters.NetType)]);
+    ngOracle: begin
+      major := ServerVersionInt div 10000;
+      minor := (ServerVersionInt mod 10000) div 100;
+      build := ServerVersionInt mod 100;
+      Result := IntToStr(major) + '.' + IntToStr(minor) + '.' + IntToStr(build);
     end;
+    else
+      Result := FServerVersionUntouched;
   end;
 end;
 
@@ -7928,6 +7944,21 @@ begin
       // No support for limit nor offset
       Result := Result + QueryBody;
     end;
+    ngOracle: begin
+      if QueryType = 'SELECT' then begin
+        Result := Result + QueryBody;
+        if ServerVersionInt >= 120000 then begin
+          // Oracle 12c+: ISO row limiting
+          if Offset > 0 then
+            Result := Result + ' OFFSET ' + IntToStr(Offset) + ' ROWS';
+          Result := Result + ' FETCH NEXT ' + IntToStr(Limit) + ' ROWS ONLY';
+        end else begin
+          // Oracle < 12c: ROWNUM wrapper (no offset support)
+          Result := 'SELECT * FROM (' + Result + ') WHERE ROWNUM <= ' + IntToStr(Limit);
+        end;
+      end else
+        Result := Result + QueryBody;
+    end;
   end;
 end;
 
@@ -10215,6 +10246,14 @@ begin
   Log(lcDebug, f_('Loading Oracle library %s ...', [LibraryPath]));
   FLib := TOracleLib.Create(LibraryPath, Parameters.DefaultLibrary);
   Log(lcDebug, FLib.DllFile + ' loaded.');
+  // Force OCI to return all character data in UTF-8 so DecodeAPIString works correctly.
+  // NLS_LANG format: [LANGUAGE_[TERRITORY].]CHARSET — charset-only form (.AL32UTF8) is valid.
+  // This must be set before OCIEnvCreate is called.
+  // HeidSQL expects UTF-8; force OCI to return character data in UTF-8
+  // regardless of what the user/system may have in NLS_LANG.
+  {$IFDEF LINUX}
+  setenv('NLS_LANG', 'AMERICAN_AMERICA.AL32UTF8', 1);
+  {$ENDIF}
   inherited;
 end;
 
@@ -10245,6 +10284,7 @@ var
   ConnStr: AnsiString;
   User, Pass: AnsiString;
   Status:  Integer;
+  ServiceName: String;
 begin
   if Value then begin
     DoBeforeConnect;
@@ -10259,7 +10299,15 @@ begin
 
     // Allocate and attach server handle
     FLib.OCIHandleAlloc(FEnv, @FServer, OCI_HTYPE_SERVER, 0, nil);
-    ConnStr := AnsiString(Parameters.Hostname);
+    // Build Easy Connect string: host:port/service_name
+    // AllDatabasesStr holds the service name the user entered; take first value before any comma
+    ServiceName := Trim(Parameters.AllDatabasesStr);
+    if Pos(',', ServiceName) > 0 then
+      ServiceName := Trim(Copy(ServiceName, 1, Pos(',', ServiceName) - 1));
+    if ServiceName <> '' then
+      ConnStr := AnsiString(Parameters.Hostname + ':' + IntToStr(Parameters.Port) + '/' + ServiceName)
+    else
+      ConnStr := AnsiString(Parameters.Hostname);
     Status := FLib.OCIServerAttach(FServer, FError,
       PAnsiChar(ConnStr), Length(ConnStr), OCI_DEFAULT);
     OCICheck(Status, 'OCIServerAttach');
@@ -10277,13 +10325,18 @@ begin
     FLib.OCIAttrSet(FSession, OCI_HTYPE_SESSION,
       PAnsiChar(Pass), Length(Pass), OCI_ATTR_PASSWORD, FError);
 
-    Status := FLib.OCISessionBegin(FSvcCtx, FError, FSession,
-      OCI_CRED_RDBMS, OCI_DEFAULT);
+    // SYS user must connect as SYSDBA or SYSOPER
+    if UpperCase(Parameters.Username) = 'SYS' then
+      Status := FLib.OCISessionBegin(FSvcCtx, FError, FSession, OCI_CRED_RDBMS, OCI_SYSDBA)
+    else
+      Status := FLib.OCISessionBegin(FSvcCtx, FError, FSession, OCI_CRED_RDBMS, OCI_DEFAULT);
     OCICheck(Status, 'OCISessionBegin');
     FLib.OCIAttrSet(FSvcCtx, OCI_HTYPE_SVCCTX, FSession, 0, OCI_ATTR_SESSION, FError);
 
     FActive := True;
     FServerVersionUntouched := GetVar('SELECT * FROM V$VERSION WHERE BANNER LIKE ''%Oracle%''');
+    // Set initial schema to the connected user's own schema
+    FDatabase := UpperCase(Parameters.Username);
     DoAfterConnect;
   end else begin
     if FActive then begin
@@ -10354,7 +10407,8 @@ begin
         ColNamePtr := nil;
         ColNameLen := 0;
         FLib.OCIAttrGet(ParamHandle, OCI_DTYPE_PARAM, @ColNamePtr, @ColNameLen, OCI_ATTR_NAME, FError);
-        Rows.ColNames.Add(DecodeAPIString(Copy(AnsiString(ColNamePtr), 1, ColNameLen)));
+        SetString(SQLAnsi, ColNamePtr, ColNameLen);
+        Rows.ColNames.Add(DecodeAPIString(SQLAnsi));
         Rows.ColOrgNames.Add(Rows.ColNames[i]);
 
         ColDataType := 0;
@@ -10366,7 +10420,7 @@ begin
         Bufs[i].RetCode   := 0;
         FillChar(Bufs[i].Buffer, SizeOf(Bufs[i].Buffer), 0);
 
-        FLib.OCIDescriptorFree(ParamHandle, OCI_DTYPE_PARAM);
+        // Note: ParamHandle from OCIParamGet is owned by StmtHandle — do NOT free it
 
         DefHandle := nil;
         FLib.OCIDefineByPos(StmtHandle, @DefHandle, FError, i + 1,
@@ -10419,12 +10473,18 @@ end;
 
 function TOracleConnection.Ping(Reconnect: Boolean): Boolean;
 begin
-  try
-    Query('SELECT 1 FROM DUAL');
-    Result := True;
-  except
-    Result := False;
+  Result := FActive;
+  if not Result then begin
     if Reconnect then begin
+      try Active := True; except end;
+      Result := FActive;
+    end;
+    Exit;
+  end;
+  // Use OCIPing for a lightweight server round-trip (avoids recursive Query call)
+  if Assigned(FLib) and Assigned(FLib.OCIPing) then begin
+    Result := FLib.OCIPing(FSvcCtx, FError, OCI_DEFAULT) in [OCI_SUCCESS, OCI_SUCCESS_WITH_INFO];
+    if not Result and Reconnect then begin
       try Active := False; except end;
       try Active := True;  except end;
       Result := FActive;
@@ -10452,31 +10512,40 @@ end;
 
 function TOracleConnection.GetAllDatabases: TStringList;
 begin
-  Result := inherited;
-  if not Assigned(Result) then begin
+  // Do NOT call inherited — base class would return AllDatabasesStr (the service name) as a
+  // single-element list, since it's always set for Oracle connections. We always query the real
+  // schema list from ALL_USERS instead.
+  if not Assigned(FAllDatabases) then begin
     try
       FAllDatabases := GetCol('SELECT USERNAME FROM ALL_USERS ORDER BY USERNAME', 0);
     except on E:EDbError do
       FAllDatabases := TStringList.Create;
     end;
     ApplyIgnoreDatabasePattern(FAllDatabases);
-    Result := FAllDatabases;
   end;
+  Result := FAllDatabases;
 end;
 
 procedure TOracleConnection.FetchDbObjects(db: String; var Cache: TDBObjectList);
 var
   obj: TDBObject;
   Results: TDBQuery;
+  ObjType: String;
 begin
   Results := nil;
   try
+    // Join ALL_OBJECTS with ALL_TABLES (for size/rows) and ALL_TAB_COMMENTS (for comments)
     Results := GetResults(
-      'SELECT OBJECT_NAME, OBJECT_TYPE, CREATED, LAST_DDL_TIME' +
-      ' FROM ALL_OBJECTS' +
-      ' WHERE OWNER = ' + EscapeString(db, False) +
-      ' AND OBJECT_TYPE IN (''TABLE'',''VIEW'',''PROCEDURE'',''FUNCTION'',''TRIGGER'',''PACKAGE'',''SEQUENCE'')' +
-      ' ORDER BY OBJECT_TYPE, OBJECT_NAME');
+      'SELECT o.OBJECT_NAME, o.OBJECT_TYPE,' +
+      ' o.CREATED, o.LAST_DDL_TIME,' +
+      ' t.NUM_ROWS, t.BLOCKS * 8192 AS DATA_BYTES,' +
+      ' c.COMMENTS' +
+      ' FROM ALL_OBJECTS o' +
+      ' LEFT JOIN ALL_TABLES t ON t.OWNER = o.OWNER AND t.TABLE_NAME = o.OBJECT_NAME' +
+      ' LEFT JOIN ALL_TAB_COMMENTS c ON c.OWNER = o.OWNER AND c.TABLE_NAME = o.OBJECT_NAME' +
+      ' WHERE o.OWNER = ' + EscapeString(db) +
+      ' AND o.OBJECT_TYPE IN (''TABLE'',''VIEW'',''PROCEDURE'',''FUNCTION'',''TRIGGER'')' +
+      ' ORDER BY o.OBJECT_TYPE, o.OBJECT_NAME');
   except
     on E:EDbError do;
   end;
@@ -10486,13 +10555,19 @@ begin
     Cache.Add(obj);
     obj.Name     := Results.Col('OBJECT_NAME');
     obj.Database := db;
-    obj.Created  := Now;
-    obj.Updated  := Now;
-    if      Results.Col('OBJECT_TYPE') = 'VIEW'      then obj.NodeType := lntView
-    else if Results.Col('OBJECT_TYPE') = 'PROCEDURE' then obj.NodeType := lntProcedure
-    else if Results.Col('OBJECT_TYPE') = 'FUNCTION'  then obj.NodeType := lntFunction
-    else if Results.Col('OBJECT_TYPE') = 'TRIGGER'   then obj.NodeType := lntTrigger
-    else obj.NodeType := lntTable;
+    obj.Schema   := db;
+    obj.Comment  := Results.Col('COMMENTS', True);
+    obj.Rows     := StrToInt64Def(Results.Col('NUM_ROWS', True), -1);
+    obj.DataLen  := StrToInt64Def(Results.Col('DATA_BYTES', True), 0);
+    obj.Size     := obj.DataLen;
+    Inc(Cache.FDataSize, obj.Size);
+    Cache.FLargestObjectSize := Max(Cache.FLargestObjectSize, obj.Size);
+    ObjType := Results.Col('OBJECT_TYPE');
+    if      ObjType = 'VIEW'      then obj.NodeType := lntView
+    else if ObjType = 'PROCEDURE' then obj.NodeType := lntProcedure
+    else if ObjType = 'FUNCTION'  then obj.NodeType := lntFunction
+    else if ObjType = 'TRIGGER'   then obj.NodeType := lntTrigger
+    else                               obj.NodeType := lntTable;
     Results.Next;
   end;
   Results.Free;
