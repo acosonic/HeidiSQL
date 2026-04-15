@@ -10247,10 +10247,7 @@ begin
   FLib := TOracleLib.Create(LibraryPath, Parameters.DefaultLibrary);
   Log(lcDebug, FLib.DllFile + ' loaded.');
   // Force OCI to return all character data in UTF-8 so DecodeAPIString works correctly.
-  // NLS_LANG format: [LANGUAGE_[TERRITORY].]CHARSET — charset-only form (.AL32UTF8) is valid.
   // This must be set before OCIEnvCreate is called.
-  // HeidSQL expects UTF-8; force OCI to return character data in UTF-8
-  // regardless of what the user/system may have in NLS_LANG.
   {$IFDEF LINUX}
   setenv('NLS_LANG', 'AMERICAN_AMERICA.AL32UTF8', 1);
   {$ENDIF}

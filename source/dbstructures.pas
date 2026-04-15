@@ -136,9 +136,8 @@ type
   TDbLib = class(TObject)
     const
       LIB_PROC_ERROR: Cardinal = 1000;
-    private
-      FHandle: TLibHandle;
     protected
+      FHandle: TLibHandle;
       FDllFile: String;
       procedure AssignProc(var Proc: Pointer; Name: PAnsiChar; Mandantory: Boolean=True);
       procedure AssignProcedures; virtual; abstract;

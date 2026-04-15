@@ -113,7 +113,7 @@ type
   TOracleLib = class(TDbLib)
     OCIEnvCreate:    function(envhpp: PPOCIEnv; mode: Cardinal;
                        ctxp, malocfp, ralocfp, mfreefp: Pointer;
-                       xtramemsz: Cardinal; usrmempp: PPointer): Integer; cdecl;
+                       xtramemsz: NativeUInt; usrmempp: PPointer): Integer; cdecl;
     OCIHandleAlloc:  function(parenth: Pointer; hndlpp: PPointer;
                        htype, xtramem_sz: Cardinal;
                        usrmempp: PPointer): Integer; cdecl;
@@ -170,6 +170,7 @@ type
     procedure AssignProcedures; override;
   public
     constructor Create(UsedDllFile, HintDefaultDll: String); override;
+    destructor Destroy; override;
   end;
 
   TOracleProvider = class(TSqlProvider)
@@ -236,6 +237,16 @@ end;
 constructor TOracleLib.Create(UsedDllFile, HintDefaultDll: String);
 begin
   inherited Create(UsedDllFile, HintDefaultDll);
+end;
+
+destructor TOracleLib.Destroy;
+begin
+  // Oracle Instant Client on Linux cannot safely be unloaded (dlclose) and
+  // reloaded within the same process — the next OCIEnvCreate crashes.
+  // Zero the handle so the parent destructor skips FreeLibrary, intentionally
+  // keeping the library resident for the lifetime of the process.
+  FHandle := 0;
+  inherited;
 end;
 
 

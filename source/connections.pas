@@ -18,6 +18,21 @@ uses
 
 type
 
+  { TFetchDatabasesThread }
+
+  TFetchDatabasesThread = class(TThread)
+  private
+    FConnection: TDBConnection;
+    FIsPostgreSQL: Boolean;
+    FIsOracle: Boolean;
+  public
+    Databases: TStringList;
+    Error: String;
+    constructor Create(AConnection: TDBConnection; AIsPostgreSQL, AIsOracle: Boolean);
+  protected
+    procedure Execute; override;
+  end;
+
   { Tconnform }
 
   Tconnform = class(TExtForm)
@@ -1298,6 +1313,34 @@ begin
 end;
 
 
+{ TFetchDatabasesThread }
+
+constructor TFetchDatabasesThread.Create(AConnection: TDBConnection; AIsPostgreSQL, AIsOracle: Boolean);
+begin
+  inherited Create(True);
+  FConnection := AConnection;
+  FIsPostgreSQL := AIsPostgreSQL;
+  FIsOracle := AIsOracle;
+  FreeOnTerminate := False;
+  Databases := nil;
+  Error := '';
+end;
+
+procedure TFetchDatabasesThread.Execute;
+begin
+  try
+    FConnection.Active := True;
+    if FIsPostgreSQL then
+      Databases := FConnection.GetCol('SELECT datname FROM pg_database WHERE datistemplate=FALSE')
+    else
+      Databases := FConnection.AllDatabases;
+  except
+    on E: Exception do
+      Error := E.Message;
+  end;
+end;
+
+
 procedure Tconnform.editDatabasesRightButtonClick(Sender: TObject);
 var
   Connection: TDBConnection;
@@ -1305,6 +1348,8 @@ var
   Item: TMenuItem;
   DB: String;
   Databases: TStringList;
+  FetchThread: TFetchDatabasesThread;
+  Dots: Integer;
 begin
   // Rebuild popup if nil or empty (empty = previous connect failed silently)
   if (FPopupDatabases = nil) or (FPopupDatabases.Items.Count = 0) then begin
@@ -1318,25 +1363,55 @@ begin
     Connection.LogPrefix := SelectedSessionPath;
     Connection.OnLog := Mainform.LogSQL;
     FPopupDatabases := TPopupMenu.Create(Self);
+
+    // Run the blocking connect + query in a background thread.
+    // Disable the form so no other actions (Open, Enter, etc.) can fire
+    // concurrently, which would crash OCI with two simultaneous OCIEnvCreate calls.
+    FetchThread := TFetchDatabasesThread.Create(Connection,
+      Params.NetTypeGroup = ngPgSQL,
+      Params.NetTypeGroup = ngOracle);
+    Self.Enabled := False;
     Screen.Cursor := crHourglass;
+    Dots := 0;
+    FetchThread.Start;
     try
-      Connection.Active := True;
-      if Params.NetTypeGroup = ngPgSQL then
-        Databases := Connection.GetCol('SELECT datname FROM pg_database WHERE datistemplate=FALSE')
-      else
-        Databases := Connection.AllDatabases;
-      for DB in Databases do begin
-        Item := TMenuItem.Create(FPopupDatabases);
-        Item.Caption := DB;
-        Item.OnClick := MenuDatabasesClick;
-        Item.AutoCheck := True;
-        Item.RadioItem := Params.IsAnyPostgreSQL;
-        FPopupDatabases.Items.Add(Item);
+      while not FetchThread.Finished do begin
+        Inc(Dots);
+        if Dots > 3 then Dots := 1;
+        // Keep GTK2 event loop alive so WM doesn't show "Force kill" dialog.
+        // The form is disabled so no re-entrant actions can fire.
+        Application.ProcessMessages;
+        Sleep(300);
       end;
-      Databases.Free;
-    except
-      // Silence connection errors here - should be sufficient to log them
+    finally
+      Screen.Cursor := crDefault;
+      Self.Enabled := True;
     end;
+
+    if FetchThread.Error = '' then begin
+      Databases := FetchThread.Databases;
+      if Assigned(Databases) then begin
+        for DB in Databases do begin
+          Item := TMenuItem.Create(FPopupDatabases);
+          Item.Caption := DB;
+          if Params.NetTypeGroup = ngOracle then begin
+            // Oracle: schemas are informational only — selecting one must not
+            // overwrite the service name stored in the Databases field
+            Item.OnClick := nil;
+            Item.AutoCheck := False;
+          end else begin
+            Item.OnClick := MenuDatabasesClick;
+            Item.AutoCheck := True;
+            Item.RadioItem := Params.IsAnyPostgreSQL;
+          end;
+          FPopupDatabases.Items.Add(Item);
+        end;
+        Databases.Free;
+      end;
+    end;
+    // Silence connection errors (already logged)
+
+    FetchThread.Free;
     FreeAndNil(Connection);
   end;
 
@@ -1348,7 +1423,6 @@ begin
   Databases.Free;
 
   ShowPopup(editDatabases.Button, FPopupDatabases);
-  Screen.Cursor := crDefault;
 end;
 
 
