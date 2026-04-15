@@ -263,7 +263,7 @@ begin
     qGetRowCountApprox:
       Result :=
         'SELECT NVL(NUM_ROWS, 0) FROM ALL_TABLES' +
-        ' WHERE OWNER = %s AND TABLE_NAME = %s';
+        ' WHERE OWNER = :EscapedDatabase AND TABLE_NAME = :EscapedName';
     qUSEQuery:
       Result := 'ALTER SESSION SET CURRENT_SCHEMA = %s';
     else
