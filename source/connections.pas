@@ -1306,7 +1306,9 @@ var
   DB: String;
   Databases: TStringList;
 begin
-  if FPopupDatabases = nil then begin
+  // Rebuild popup if nil or empty (empty = previous connect failed silently)
+  if (FPopupDatabases = nil) or (FPopupDatabases.Items.Count = 0) then begin
+    FreeAndNil(FPopupDatabases);
     // Try to connect and lookup database names
     Params := CurrentParams;
     Connection := Params.CreateConnection(Self);
@@ -1316,11 +1318,13 @@ begin
     Connection.LogPrefix := SelectedSessionPath;
     Connection.OnLog := Mainform.LogSQL;
     FPopupDatabases := TPopupMenu.Create(Self);
-    //FPopupDatabases.AutoHotkeys := maManual;
     Screen.Cursor := crHourglass;
     try
       Connection.Active := True;
-      if Params.NetTypeGroup = ngPgSQL then
+      if Params.NetTypeGroup = ngOracle then
+        // Show service names for Oracle, not schemas (schemas go in the tree, not here)
+        Databases := Connection.GetCol('SELECT NAME FROM V$SERVICES ORDER BY NAME', 0)
+      else if Params.NetTypeGroup = ngPgSQL then
         Databases := Connection.GetCol('SELECT datname FROM pg_database WHERE datistemplate=FALSE')
       else
         Databases := Connection.AllDatabases;
