@@ -436,8 +436,8 @@ type
   // This returns a stable, lowercase name "heidisql", used for configuration files and translations
   function GetApplicationName: String;
   procedure CopyImageList(SourceList, TargetList: TImageList; AppendDisabled: Boolean);
-  procedure DrawRobotIcon(Bmp: TBitmap; Size: Integer);
-  procedure DrawOracleIcon(Bmp: TBitmap; Size: Integer);
+  procedure DrawRobotIcon(Bmp: Graphics.TBitmap; Size: Integer);
+  procedure DrawOracleIcon(Bmp: Graphics.TBitmap; Size: Integer);
 
 var
   AppSettings: TAppSettings;
@@ -3052,7 +3052,7 @@ begin
 end;
 
 
-procedure DrawRobotIcon(Bmp: TBitmap; Size: Integer);
+procedure DrawRobotIcon(Bmp: Graphics.TBitmap; Size: Integer);
 // Pixel format matches TCustomImageListResolution.FillDescription:
 //   ByteOrder=MSBFirst, shifts: Blue=24, Green=16, Red=8, Alpha=0
 // In memory (byte order): B, G, R, A  per pixel
@@ -3152,7 +3152,7 @@ begin
 end;
 
 
-procedure DrawOracleIcon(Bmp: TBitmap; Size: Integer);
+procedure DrawOracleIcon(Bmp: Graphics.TBitmap; Size: Integer);
 // Replicates the Oracle SVG logo (stadium/capsule ring shape, red #FF0000)
 // SVG viewBox 24x24; outer stadium radius=6.956, inner=4.502
 // Pixel format: B, G, R, A per pixel (MSBFirst)
