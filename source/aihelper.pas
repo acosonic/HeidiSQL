@@ -77,7 +77,12 @@ begin
   SystemPrompt :=
     FSchema + #10 +
     'Respond ONLY with raw JSON (no markdown, no code blocks): {"sql":"...","explanation":"one sentence"}' + #10 +
-    'Rules: use exact column/table names from the schema; add LIMIT 200 to SELECT unless user specifies; ' +
+    'Rules: use exact column/table names from the schema; ' +
+    'use database-appropriate row limit syntax — ' +
+    'MySQL/MariaDB/SQLite/PostgreSQL: append LIMIT 200; ' +
+    'Oracle: append FETCH FIRST 200 ROWS ONLY (never use LIMIT); ' +
+    'MS SQL Server: use TOP 200 after SELECT or OFFSET 0 ROWS FETCH NEXT 200 ROWS ONLY after ORDER BY; ' +
+    'column aliases with spaces must be quoted with double quotes; ' +
     'never use DROP/TRUNCATE/ALTER unless explicitly asked.';
 
   ReqObj := TJSONObject.Create;
@@ -193,6 +198,7 @@ begin
   Lines := TStringList.Create;
   try
     Lines.Add('DATABASE: ' + Database);
+    Lines.Add('DATABASE_TYPE: ' + Connection.Parameters.NetTypeName(True));
     Lines.Add('SCHEMA:');
 
     if not Connection.DbObjectsCached(Database) then
