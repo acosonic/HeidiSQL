@@ -1,5 +1,5 @@
 # HeidiSQL Lazarus/FreePascal port
-[![Build Status](https://github.com/HeidiSQL/HeidiSQL/actions/workflows/lazarus.yaml/badge.svg?branch=lazarus)](https://github.com/HeidiSQL/HeidiSQL/actions)
+[![Build Status](https://github.com/acosonic/HeidiSQL/actions/workflows/lazarus.yaml/badge.svg?branch=lazarus)](https://github.com/acosonic/HeidiSQL/actions)
 [![Supports Windows](https://img.shields.io/badge/support-Windows-blue?logo=Windows)](https://github.com/HeidiSQL/HeidiSQL/releases/latest)
 [![Supports Linux](https://img.shields.io/badge/support-Linux-yellow?logo=Linux)](https://github.com/HeidiSQL/HeidiSQL/releases/latest)
 [![Supports macOS](https://img.shields.io/badge/support-macOS-black?logo=macOS)](https://github.com/HeidiSQL/HeidiSQL/releases/latest)
@@ -19,6 +19,40 @@ handlings, and ADO driver usage. Therefore, support for MS SQL is being redevelo
 Ansgar
 
 ![HeidiSQL GTK2 running on Ubuntu Linux 22.04](https://www.heidisql.com/images/screenshots/linux_version_datagrid.png)
+
+---
+
+## acosonic/lazarus branch additions
+
+This fork's `lazarus` branch extends the upstream with the following features:
+
+### Oracle OCI support
+Native Oracle connectivity via OCI (Oracle Call Interface) — no ODBC or third-party middleware required.
+
+- Connects using Easy Connect string (`host:port/service_name`)
+- Auto-detects `SYS` user and connects with `SYSDBA` privilege
+- Schema browsing: all Oracle schemas (users) shown as "databases" in the tree
+- `ALTER SESSION SET CURRENT_SCHEMA` issued on schema selection, so queries work without a schema prefix
+- Data grid: uses `FETCH NEXT n ROWS ONLY` on Oracle 12c+, `ROWNUM` wrapper on older versions
+- Table columns, keys, foreign keys, and CREATE code via `DBMS_METADATA.GET_DDL`
+- Cyrillic and other non-ASCII text rendered correctly (`NLS_LANG=AMERICAN_AMERICA.AL32UTF8`)
+- Lightweight keep-alive via `OCIPing` (no recursive query calls)
+
+### AI SQL generation
+Generate SQL queries from natural language using the Anthropic Claude API.
+
+- API key and model configured in Preferences → AI
+- Schema context (tables + columns) is automatically included in the prompt
+- Column metadata is pre-cached in the background after connecting so generation is instant
+- Robot icon on the AI tab; prompt strip positioned at the top of the query editor
+
+### Other improvements
+- `Ctrl+W` closes the active query tab (Ctrl+F4 kept as secondary shortcut)
+- Row viewer dialog with inline editing support
+- Wayland auto-detection on Linux
+- Background DB structure cache warm-up after connection
+
+---
 
 ### Building
 Install Lazarus 4.4 and FreePascal. Then load the `.lpi` file in the root directory in the Lazarus IDE.
