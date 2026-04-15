@@ -1321,10 +1321,7 @@ begin
     Screen.Cursor := crHourglass;
     try
       Connection.Active := True;
-      if Params.NetTypeGroup = ngOracle then
-        // Show service names for Oracle, not schemas (schemas go in the tree, not here)
-        Databases := Connection.GetCol('SELECT NAME FROM V$SERVICES ORDER BY NAME', 0)
-      else if Params.NetTypeGroup = ngPgSQL then
+      if Params.NetTypeGroup = ngPgSQL then
         Databases := Connection.GetCol('SELECT datname FROM pg_database WHERE datistemplate=FALSE')
       else
         Databases := Connection.AllDatabases;
